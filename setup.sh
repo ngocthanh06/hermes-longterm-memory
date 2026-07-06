@@ -64,18 +64,19 @@ if command -v claude >/dev/null 2>&1; then
   step "Configuring Claude Code automatically"
   HERMES_CONFIGURE_CLAUDE_MD=0
   if [ -t 0 ]; then
-    echo "Tuy chon: them mot doan chi thi vao ~/.claude/CLAUDE.md (ap dung cho MOI project)"
-    echo "de khi Claude Code tu quyet dinh luu long-term memory, no uu tien goi MCP"
-    echo "hermes-memory (localhost:8800) thay vi bo nho file-based built-in rieng; chi"
-    echo "dung built-in khi cac tool mcp__hermes-memory__* khong co san trong phien."
-    read -r -p "Ban co dong y them chi thi nay khong? [y/N] " claude_md_consent
+    echo "Optional: add a block to ~/.claude/CLAUDE.md (applies to EVERY project)"
+    echo "so that when Claude Code decides on its own to save long-term memory, it"
+    echo "prefers the hermes-memory MCP (localhost:8800) over its own built-in"
+    echo "file-based memory, falling back to built-in only when the"
+    echo "mcp__hermes-memory__* tools aren't available in the session."
+    read -r -p "Add this instruction? [y/N] " claude_md_consent
     case "$claude_md_consent" in
       [yY]*) HERMES_CONFIGURE_CLAUDE_MD=1 ;;
-      *) echo "Bo qua — khong sua ~/.claude/CLAUDE.md." ;;
+      *) echo "Skipped — ~/.claude/CLAUDE.md left untouched." ;;
     esac
   else
-    echo "Khong o che do tuong tac — bo qua cau hoi cho ~/.claude/CLAUDE.md."
-    echo "Chay lai ./setup.sh trong terminal neu muon bat tuy chon nay."
+    echo "Non-interactive shell — skipping the ~/.claude/CLAUDE.md consent prompt."
+    echo "Re-run ./setup.sh in a terminal if you want to enable this option."
   fi
   export HERMES_CONFIGURE_CLAUDE_MD
   python3 scripts/configure_claude.py
