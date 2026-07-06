@@ -86,11 +86,11 @@ def patch_config() -> None:
     try:
         import yaml
     except ImportError:
-        fail("PyYAML không có trong python này — chạy qua setup.sh (dùng venv của Hermes)")
+        fail("PyYAML is not available in this python — run via setup.sh (uses Hermes' venv)")
         return
 
     if not CONFIG.exists():
-        fail(f"{CONFIG} không tồn tại — cài Hermes Desktop trước")
+        fail(f"{CONFIG} does not exist — install Hermes Desktop first")
         return
 
     cfg = yaml.safe_load(CONFIG.read_text()) or {}
@@ -107,14 +107,14 @@ def patch_config() -> None:
             ]
             entries.append({"command": command, "timeout": 10})
             changed = True
-            note(f"đã đăng ký hook {event}")
+            note(f"registered hook {event}")
         else:
-            note(f"hook {event} đã có")
+            note(f"hook {event} already present")
 
     if cfg.get("hooks_auto_accept") is not True:
         cfg["hooks_auto_accept"] = True
         changed = True
-        note("đã bật hooks_auto_accept")
+        note("enabled hooks_auto_accept")
 
     mcp = cfg.setdefault("mcp_servers", {})
     if not isinstance(mcp, dict):
@@ -123,14 +123,14 @@ def patch_config() -> None:
     if not (isinstance(entry, dict) and entry.get("url") == MCP_URL and entry.get("enabled")):
         mcp["hermes-memory"] = {"url": MCP_URL, "enabled": True}
         changed = True
-        note("đã đăng ký MCP hermes-memory")
+        note("registered MCP hermes-memory")
     else:
-        note("MCP hermes-memory đã có")
+        note("MCP hermes-memory already present")
 
     if changed:
         _backup(CONFIG)
         CONFIG.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False))
-        note("đã ghi config.yaml (backup .bak.* bên cạnh)")
+        note("wrote config.yaml (.bak.* backup alongside)")
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +160,9 @@ def patch_allowlist() -> None:
             if existing.get("script_mtime_at_approval") != mtime:
                 existing["script_mtime_at_approval"] = mtime
                 existing["approved_at"] = _utcnow()
-                note(f"cập nhật consent {event} (script đã đổi)")
+                note(f"updated consent for {event} (script changed)")
             else:
-                note(f"consent {event} đã có")
+                note(f"consent for {event} already present")
         else:
             approvals.append({
                 "approved_at": _utcnow(),
@@ -170,7 +170,7 @@ def patch_allowlist() -> None:
                 "event": event,
                 "script_mtime_at_approval": mtime,
             })
-            note(f"đã ghi consent {event}")
+            note(f"recorded consent for {event}")
     ALLOWLIST.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
@@ -184,21 +184,21 @@ NEW_GATE = 'def _command_has_dedicated_mcp_startup(args) -> bool:\n    if args.c
 
 
 def patch_serve() -> None:
-    print("==> vá Hermes serve (đăng ký hook cho Desktop backend)")
+    print("==> patch Hermes serve (register hooks for the Desktop backend)")
     if not MAIN_PY.exists():
-        fail(f"không tìm thấy {MAIN_PY}")
+        fail(f"{MAIN_PY} not found")
         return
     src = MAIN_PY.read_text()
     if NEW_CMDS.split("  #")[0] in src:
-        note("đã vá từ trước")
+        note("already patched")
         return
     if OLD_CMDS not in src or OLD_GATE not in src:
-        fail("source Hermes khác phiên bản mong đợi — vá tay _AGENT_COMMANDS trong hermes_cli/main.py (thêm \"serve\")")
+        fail("Hermes source differs from the expected version — manually patch _AGENT_COMMANDS in hermes_cli/main.py (add \"serve\")")
         return
     _backup(MAIN_PY)
     src = src.replace(OLD_CMDS, NEW_CMDS).replace(OLD_GATE, NEW_GATE)
     MAIN_PY.write_text(src)
-    note("đã vá (backup .bak.* bên cạnh). Lưu ý: update Hermes sẽ ghi đè — chạy lại setup.sh sau khi update")
+    note("patched (.bak.* backup alongside). Note: a Hermes update overwrites this — re-run setup.sh after updating")
 
 
 # ---------------------------------------------------------------------------
@@ -224,19 +224,19 @@ for a short core identity summary (name, machine, language preference).
 
 
 def patch_soul() -> None:
-    print("==> SOUL.md (định tuyến memory cho model)")
+    print("==> SOUL.md (memory routing for the model)")
     text = SOUL.read_text() if SOUL.exists() else ""
     if SOUL_MARKER_START in text and SOUL_MARKER_END in text:
         start = text.index(SOUL_MARKER_START)
         end = text.index(SOUL_MARKER_END) + len(SOUL_MARKER_END)
         if text[start:end] == SOUL_BLOCK:
-            note("đã có, không đổi")
+            note("already present, unchanged")
             return
         text = text[:start] + SOUL_BLOCK + text[end:]
-        note("đã cập nhật block định tuyến")
+        note("updated routing block")
     else:
         text = (text.rstrip() + "\n\n" if text.strip() else "") + SOUL_BLOCK + "\n"
-        note("đã thêm block định tuyến")
+        note("added routing block")
     if SOUL.exists():
         _backup(SOUL)
     SOUL.write_text(text)
@@ -271,10 +271,10 @@ def _set_env_lines(path: Path, updates: dict) -> None:
 
 
 def sync_llm_env() -> None:
-    print("==> LLM cho auto-consolidation")
+    print("==> LLM for auto-consolidation")
     repo_env = _read_env(REPO_ENV)
     if repo_env.get("LLM_PROVIDER", "none") not in ("", "none"):
-        note(f"LLM_PROVIDER={repo_env['LLM_PROVIDER']} đã cấu hình — giữ nguyên")
+        note(f"LLM_PROVIDER={repo_env['LLM_PROVIDER']} already configured — keeping it")
         return
 
     hermes_env = _read_env(HERMES_ENV)
@@ -284,34 +284,34 @@ def sync_llm_env() -> None:
             "LLM_MODEL": "deepseek-ai/deepseek-v4-pro",
             "NVIDIA_API_KEY": hermes_env["NVIDIA_API_KEY"],
         }
-        note("dùng NVIDIA key từ ~/.hermes/.env (model: deepseek-v4-pro)")
+        note("using NVIDIA key from ~/.hermes/.env (model: deepseek-v4-pro)")
     elif hermes_env.get("GOOGLE_API_KEY"):
         updates = {
             "LLM_PROVIDER": "gemini",
             "LLM_MODEL": "models/gemini-2.5-flash",
             "GOOGLE_API_KEY": hermes_env["GOOGLE_API_KEY"],
         }
-        note("dùng Gemini key từ ~/.hermes/.env")
+        note("using Gemini key from ~/.hermes/.env")
     else:
-        note("không tìm thấy API key — consolidation sẽ chờ tool consolidate_session (LLM_PROVIDER=none)")
+        note("no API key found — consolidation will wait for the consolidate_session tool (LLM_PROVIDER=none)")
         return
     _set_env_lines(REPO_ENV, updates)
-    note("đã cập nhật .env — cần `docker compose up -d` để nhận cấu hình")
+    note("updated .env — run `docker compose up -d` to pick up the config")
 
 
 # ---------------------------------------------------------------------------
 # 5. nightly backup launchd agent (macOS)
 # ---------------------------------------------------------------------------
 def install_backup_agent() -> None:
-    print("==> backup tự động (launchd, 2:00 sáng)")
+    print("==> automatic backup (launchd, 2:00 AM)")
     if sys.platform != "darwin":
-        note("không phải macOS — tự cài cron cho scripts/backup.sh")
+        note("not macOS — set up a cron job for scripts/backup.sh yourself")
         return
     template = REPO / "scripts" / "com.hermes.memory-backup.plist.template"
     target = Path.home() / "Library" / "LaunchAgents" / "com.hermes.memory-backup.plist"
     rendered = template.read_text().replace("__REPO__", str(REPO))
     if target.exists() and target.read_text() == rendered:
-        note("đã cài từ trước")
+        note("already installed")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered)
@@ -319,9 +319,9 @@ def install_backup_agent() -> None:
     subprocess.run(["launchctl", "unload", str(target)], capture_output=True)
     result = subprocess.run(["launchctl", "load", str(target)], capture_output=True, text=True)
     if result.returncode == 0:
-        note(f"đã cài + load {target.name}")
+        note(f"installed + loaded {target.name}")
     else:
-        fail(f"launchctl load lỗi: {result.stderr.strip()}")
+        fail(f"launchctl load failed: {result.stderr.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ def install_backup_agent() -> None:
 def restart_desktop() -> None:
     print("==> restart Hermes Desktop")
     if sys.platform != "darwin":
-        note("không phải macOS — tự restart Hermes Desktop thủ công")
+        note("not macOS — restart Hermes Desktop manually")
         return
     subprocess.run(["osascript", "-e", 'quit app "Hermes"'], capture_output=True)
     for _ in range(15):
@@ -341,18 +341,18 @@ def restart_desktop() -> None:
     else:
         subprocess.run(["pkill", "-f", "hermes_cli.main serve"], capture_output=True)
         time.sleep(2)
-        note("backend không tự thoát — đã buộc dừng")
+        note("backend did not exit on its own — force-stopped it")
     if APP.exists():
         subprocess.run(["open", "-a", str(APP)], capture_output=True)
-        note("đã mở lại Hermes Desktop")
+        note("relaunched Hermes Desktop")
     else:
-        note("không tìm thấy Hermes.app — mở lại thủ công")
+        note("Hermes.app not found — relaunch manually")
 
 
 def main() -> int:
     missing = [s for s in HOOKS.values() if not s.exists()]
     if missing:
-        print(f"✗ thiếu hook script: {missing}")
+        print(f"✗ missing hook scripts: {missing}")
         return 1
     patch_config()
     patch_allowlist()
@@ -362,7 +362,7 @@ def main() -> int:
     install_backup_agent()
     if "--no-restart" not in sys.argv:
         restart_desktop()
-    print("Hoàn tất" if ok_all else "Có mục cần xử lý tay (xem ✗ ở trên)")
+    print("Done" if ok_all else "Some items need manual attention (see ✗ above)")
     return 0 if ok_all else 1
 
 

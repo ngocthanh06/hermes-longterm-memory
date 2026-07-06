@@ -40,8 +40,9 @@ def resolve_project(cwd: str) -> str:
             conn = sqlite3.connect(f"file:{PROJECTS_DB}?mode=ro", uri=True, timeout=1)
             conn.execute("SELECT 1").fetchone()
         except sqlite3.OperationalError:
-            # DB ở WAL mode: mở read-only có thể fail vì cần ghi -shm.
-            # Kết nối thường vẫn an toàn — chỉ SELECT, WAL cho đọc song song.
+            # DB is in WAL mode: a read-only open can fail because it needs
+            # to write -shm. A normal connection is still safe — SELECT only,
+            # and WAL allows concurrent reads.
             conn = sqlite3.connect(str(PROJECTS_DB), timeout=1)
         rows = conn.execute(
             "SELECT p.slug, f.path FROM project_folders f"

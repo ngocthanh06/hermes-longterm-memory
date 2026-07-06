@@ -159,8 +159,8 @@ hermes-agent/
 ├── setup.sh                 # one-command install (Docker + automatic Hermes wiring)
 ├── docker-compose.yml       # qdrant + llamaindex (+ optional ollama profile)
 ├── .env.example
-├── ARCHITECTURE.md          # detailed architecture (Vietnamese)
-├── UPGRADE_PLAN.md          # roadmap + progress (Vietnamese)
+├── ARCHITECTURE.md          # detailed architecture
+├── UPGRADE_PLAN.md          # roadmap + progress
 ├── hooks/
 │   ├── post_llm_call.py     # record each turn (tagged with sidebar project)
 │   ├── pre_llm_call.py      # auto-inject memory into every turn

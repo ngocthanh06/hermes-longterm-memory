@@ -53,7 +53,7 @@ def transcript_from_points(points: list) -> str:
                 break
             kept.append(line)
             total += len(line)
-        transcript = "[...phần đầu hội thoại đã lược bớt...]\n" + "\n".join(reversed(kept))
+        transcript = "[...beginning of conversation truncated...]\n" + "\n".join(reversed(kept))
     return transcript
 
 

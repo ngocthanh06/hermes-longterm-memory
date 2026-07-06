@@ -15,7 +15,7 @@ mkdir -p "$BACKUP_DIR" "$ROOT/logs"
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 if ! curl -fsS "$QDRANT_URL/collections" >/dev/null 2>&1; then
-  log "SKIP: Qdrant không phản hồi tại $QDRANT_URL"
+  log "SKIP: Qdrant not responding at $QDRANT_URL"
   rmdir "$BACKUP_DIR" 2>/dev/null || true
   exit 0
 fi
@@ -37,7 +37,7 @@ cp "$ROOT/.env" "$BACKUP_DIR/env.backup" 2>/dev/null || true
 cd "$ROOT/backups"
 ls -1d */ 2>/dev/null | sort | awk -v keep="$KEEP" '{a[NR]=$0} END{for(i=1;i<=NR-keep;i++) print a[i]}' | while read -r old; do
   rm -rf "$old"
-  log "retention: đã xoá backup cũ $old"
+  log "retention: removed old backup $old"
 done
 
-log "backup hoàn tất: $BACKUP_DIR"
+log "backup complete: $BACKUP_DIR"

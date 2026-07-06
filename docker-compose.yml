@@ -4,8 +4,8 @@ services:
     container_name: hermes-qdrant
     restart: unless-stopped
     ports:
-      # Bind localhost-only: Qdrant không có auth, mở 0.0.0.0 là cả LAN
-      # đọc/xoá được memory (dashboard cũng cho phép drop collection).
+      # Bind localhost-only: Qdrant has no auth; exposing 0.0.0.0 lets the
+      # whole LAN read/delete memory (the dashboard can drop collections too).
       - "127.0.0.1:6333:6333"   # REST API + dashboard
       - "127.0.0.1:6334:6334"   # gRPC API
     volumes:

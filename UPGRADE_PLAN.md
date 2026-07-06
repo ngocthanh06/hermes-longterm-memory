@@ -1,188 +1,196 @@
-# Kế hoạch nâng cấp Memory Stack (cải tiến 1–7)
+# Memory Stack Upgrade Plan (improvements 1–7)
 
-> Trạng thái nền: v2 + project partitioning đã chạy ổn định (2026-07-05).
-> Kế hoạch chia 4 phase theo thứ tự phụ thuộc; mỗi phase deploy được độc lập.
+> Baseline status: v2 + project partitioning running stably (2026-07-05).
+> The plan is split into 4 phases by dependency order; each phase deploys independently.
 >
-> **TIẾN ĐỘ (2026-07-05 chiều):**
-> - ✅ **Phase A hoàn thành** — A1 auto-consolidation (hook `on_session_end` +
->   sweep 30ph, LLM = NVIDIA deepseek-v4-pro qua OpenAILike vì adapter
->   `llama-index-llms-nvidia` không nhận model mới; đã thêm provider `gemini`
->   dự phòng), A2 auto-inject (`pre_llm_call` trả `{"context": ...}`,
->   recent_turns=0 tránh trùng history), A3 quản lý memory (list/forget REST +
->   MCP, DELETE session). Key NVIDIA tự sync từ ~/.hermes/.env.
-> - ✅ **Phase B hoàn thành** — backup launchd 2:00 sáng, retention 7 bản,
->   log logs/backup.log (fix BSD head bằng awk).
-> - ⬜ Phase C (bge-m3 + hybrid) — chưa làm, cần benchmark trước.
-> - ⬜ Phase D (auto-ingest docs/) — chưa làm.
+> **PROGRESS (2026-07-05 afternoon):**
+> - ✅ **Phase A complete** — A1 auto-consolidation (hook `on_session_end` +
+>   30-min sweep, LLM = NVIDIA deepseek-v4-pro via OpenAILike because the
+>   `llama-index-llms-nvidia` adapter doesn't accept new models; added a
+>   fallback `gemini` provider), A2 auto-inject (`pre_llm_call` returns
+>   `{"context": ...}`, recent_turns=0 to avoid duplicating history), A3 memory
+>   management (list/forget REST + MCP, DELETE session). NVIDIA key auto-synced
+>   from ~/.hermes/.env.
+> - ✅ **Phase B complete** — launchd backup at 2:00 AM, 7-copy retention,
+>   log at logs/backup.log (BSD head fixed with awk).
+> - ⬜ Phase C (bge-m3 + hybrid) — not done, needs benchmarking first.
+> - ⬜ Phase D (auto-ingest docs/) — not done.
 
-## Phát hiện nền tảng (đã xác minh trong source Hermes)
+## Foundational findings (verified in the Hermes source)
 
-Hermes hỗ trợ nhiều hook event hơn `post_llm_call` đang dùng:
+Hermes supports more hook events than the `post_llm_call` currently in use:
 
-| Event | Dùng cho | Cơ chế |
+| Event | Used for | Mechanism |
 |---|---|---|
-| `pre_llm_call` | **#2 auto-inject memory** | stdout `{"context": "..."}` được Hermes inject chính thức vào lượt chat |
-| `on_session_end` | **#1 auto-consolidation** | extra có `completed`, `model`, `platform` — bắn đúng lúc phiên kết thúc |
-| `on_session_start` | tuỳ chọn: warm-up recall | extra có `model`, `platform` |
+| `pre_llm_call` | **#2 auto-inject memory** | stdout `{"context": "..."}` is officially injected by Hermes into the chat turn |
+| `on_session_end` | **#1 auto-consolidation** | extra contains `completed`, `model`, `platform` — fires exactly when a session ends |
+| `on_session_start` | optional: warm-up recall | extra contains `model`, `platform` |
 
 ---
 
-## Phase A — Hoàn thiện vòng đời memory (làm trước, giá trị cao nhất)
+## Phase A — Complete the memory lifecycle (do first, highest value)
 
-### A1. Tự động consolidation (#1)
+### A1. Automatic consolidation (#1)
 
-**Vấn đề:** `hermes_memories` chỉ có dữ liệu khi ai đó chủ động gọi tool — thực tế sẽ không ai gọi.
+**Problem:** `hermes_memories` only gets data when someone actively calls the tool — in practice nobody will.
 
-**Thiết kế — 2 tầng trigger:**
-1. **Hook `on_session_end`** (mới: `hooks/on_session_end.py`): phiên kết thúc
+**Design — 2 trigger tiers:**
+1. **`on_session_end` hook** (new: `hooks/on_session_end.py`): session ends
    (`completed=true`) → `POST /memory/consolidate {session_id}` (fire-and-forget,
-   timeout ngắn, best-effort như hook hiện tại).
-2. **Sweep định kỳ trong service** (mới: `app/scheduler.py`, asyncio task trong
-   lifespan): mỗi `CONSOLIDATION_INTERVAL` (mặc định 30 phút) quét phiên có
-   ≥ `CONSOLIDATION_MIN_TURNS` (4) turn chưa chưng cất VÀ im lặng >
-   `CONSOLIDATION_IDLE_SECONDS` (15 phút) → consolidate. Bắt phiên mà hook bỏ lỡ
-   (crash, tắt máy giữa chừng).
+   short timeout, best-effort like the existing hook).
+2. **Periodic sweep in the service** (new: `app/scheduler.py`, an asyncio task in
+   the lifespan): every `CONSOLIDATION_INTERVAL` (default 30 minutes) scan for
+   sessions with ≥ `CONSOLIDATION_MIN_TURNS` (4) undistilled turns AND idle for
+   more than `CONSOLIDATION_IDLE_SECONDS` (15 minutes) → consolidate. Catches
+   sessions the hook missed (crash, machine shut down mid-session).
 
-**Điều kiện:** service cần LLM (`LLM_PROVIDER != none`). Khuyến nghị:
-`anthropic` + `claude-haiku` (rẻ, đủ cho extraction) hoặc `ollama` profile.
-Khi `none`: scheduler chỉ log cảnh báo + expose `GET /memory/pending-consolidation`
-để Hermes-side xử lý thủ công.
+**Prerequisite:** the service needs an LLM (`LLM_PROVIDER != none`). Recommended:
+`anthropic` + `claude-haiku` (cheap, sufficient for extraction) or the `ollama`
+profile. With `none`: the scheduler only logs a warning + exposes
+`GET /memory/pending-consolidation` for the Hermes side to handle manually.
 
-**Việc:** `app/scheduler.py` (mới ~80 dòng) · `hooks/on_session_end.py` (mới ~40 dòng)
-· `config.py` +4 env · `main.py` lifespan +5 dòng · `configure_hermes.py` đăng ký
-hook mới + consent · test: tạo phiên giả → chờ sweep → fact xuất hiện.
+**Work:** `app/scheduler.py` (new, ~80 lines) · `hooks/on_session_end.py` (new, ~40 lines)
+· `config.py` +4 env vars · `main.py` lifespan +5 lines · `configure_hermes.py` registers
+the new hook + consent · test: create a fake session → wait for the sweep → the fact appears.
 
-**Rủi ro:** LLM extract chất lượng kém với model quá nhỏ → prompt đã có sẵn,
-test với 2-3 model trước khi chốt khuyến nghị. Chi phí API: ~1 call/phiên, không đáng kể.
+**Risk:** poor LLM extraction quality with too-small a model → the prompt already
+exists; test with 2-3 models before finalizing the recommendation. API cost:
+~1 call/session, negligible.
 
-### A2. Tự động inject memory vào lượt chat (#2)
+### A2. Automatic memory injection into chat turns (#2)
 
-**Vấn đề:** recall phụ thuộc model Hermes nhớ gọi tool — không đáng tin.
+**Problem:** recall depends on Hermes' model remembering to call the tool — unreliable.
 
-**Thiết kế:** hook mới `hooks/pre_llm_call.py`:
+**Design:** new hook `hooks/pre_llm_call.py`:
 ```
 stdin: {session_id, cwd, extra: {user_message?, ...}}
   → POST /memory/recall {query: user_message, session_id, project: resolve(cwd)}
-  → stdout: {"context": context_block}   ← Hermes inject chính thức
+  → stdout: {"context": context_block}   ← officially injected by Hermes
 ```
-- **Bước 0 (discovery):** payload thật của `pre_llm_call` chưa được xác minh
-  (docs không liệt kê extra keys) → bật debug-dump 1 ngày như đã làm với
-  post_llm_call, chốt schema rồi mới code phần parse.
-- **Kiểm soát latency** (hook chạy đồng bộ trước mỗi LLM call): timeout 3s,
-  fail → trả rỗng; chỉ inject khi recall có kết quả thật (context_block ≠ rỗng);
-  option `RECALL_INJECT_EVERY_N_TURNS` (mặc định: mọi turn, đo thực tế rồi chỉnh).
-- Ước tính chi phí mỗi turn: 1 embed + 3 search ≈ 100–300ms trên máy M-series.
+- **Step 0 (discovery):** the real `pre_llm_call` payload is unverified
+  (the docs don't list the extra keys) → enable a 1-day debug dump like we did
+  for post_llm_call, pin down the schema before coding the parsing.
+- **Latency control** (the hook runs synchronously before every LLM call):
+  3s timeout, on failure → return empty; only inject when recall has real
+  results (context_block non-empty); option `RECALL_INJECT_EVERY_N_TURNS`
+  (default: every turn; measure in practice, then tune).
+- Estimated cost per turn: 1 embed + 3 searches ≈ 100–300ms on an M-series machine.
 
-**Việc:** `hooks/pre_llm_call.py` (mới ~70 dòng, tái dùng `resolve_project`)
-· `configure_hermes.py` đăng ký + consent · đo latency thực tế · test A/B:
-hỏi lại thông tin phiên cũ mà không gọi tool — Hermes phải tự biết.
+**Work:** `hooks/pre_llm_call.py` (new, ~70 lines, reuses `resolve_project`)
+· `configure_hermes.py` registration + consent · measure real latency · A/B test:
+ask again about info from an old session without calling any tool — Hermes must
+already know.
 
-### A3. Công cụ quản lý memory (#3)
+### A3. Memory management tools (#3)
 
-**Vấn đề:** memory nhớ sai thì không có cách sửa ngoài mò Qdrant dashboard.
+**Problem:** when memory remembers something wrong, there is no way to fix it
+short of digging through the Qdrant dashboard.
 
-**Thiết kế:**
-- REST: `GET /memory/facts?project=&type=&limit=` (liệt kê, kèm id)
-  · `DELETE /memory/facts/{id}` · `DELETE /sessions/{session_id}` (xoá cả phiên)
+**Design:**
+- REST: `GET /memory/facts?project=&type=&limit=` (list, with ids)
+  · `DELETE /memory/facts/{id}` · `DELETE /sessions/{session_id}` (delete a whole session)
 - MCP: `list_memories(project?)` · `forget_memory(id)` ·
-  `forget_about(query)` — search top-5, trả danh sách kèm id để model chọn xoá
-  (2 bước, tránh xoá nhầm theo similarity).
-- Xoá fact = xoá cứng point (khác supersede — supersede là thay thế tự nhiên,
-  forget là lệnh của người dùng).
+  `forget_about(query)` — search top-5, return a list with ids so the model
+  picks what to delete (2 steps, avoids similarity-based accidental deletion).
+- Deleting a fact = hard-deleting the point (unlike supersede — supersede is a
+  natural replacement, forget is a user command).
 
-**Việc:** `memories.py` +3 hàm · `main.py` +3 endpoint · `mcp_server.py` +3 tool
-· test: save → forget_about → recall không còn thấy.
+**Work:** `memories.py` +3 functions · `main.py` +3 endpoints · `mcp_server.py` +3 tools
+· test: save → forget_about → recall no longer sees it.
 
-**Phase A tổng:** ~1 buổi làm việc. Không migration, không đổi schema.
+**Phase A total:** ~1 working session. No migration, no schema change.
 
 ---
 
-## Phase B — Vận hành tự động (#7, làm cùng Phase A được)
+## Phase B — Automated operations (#7, can be done alongside Phase A)
 
-### B1. Backup tự động
+### B1. Automatic backup
 
-**Thiết kế:** launchd agent trên macOS (host mới truy cập được cả 2 volume qua API):
-- `scripts/backup.sh` nâng cấp: thêm retention (giữ `BACKUP_KEEP=7` bản mới nhất),
-  log ra `logs/backup.log`, snapshot cả 3 collection + copy `.env`.
-- `scripts/com.hermes.memory-backup.plist` — chạy 2:00 sáng hàng ngày.
-- `configure_hermes.py` (hoặc setup.sh) cài plist vào `~/Library/LaunchAgents`
+**Design:** a launchd agent on macOS (only the host can reach both volumes via the API):
+- `scripts/backup.sh` upgraded: add retention (keep the `BACKUP_KEEP=7` newest),
+  log to `logs/backup.log`, snapshot all 3 collections + copy `.env`.
+- `scripts/com.hermes.memory-backup.plist` — runs daily at 2:00 AM.
+- `configure_hermes.py` (or setup.sh) installs the plist into `~/Library/LaunchAgents`
   + `launchctl load`. Idempotent.
 
-**Việc:** ~30 phút. Test: `launchctl start` thủ công → kiểm tra `backups/`.
+**Work:** ~30 minutes. Test: manual `launchctl start` → check `backups/`.
 
 ---
 
-## Phase C — Chất lượng truy hồi (#4 + #5, LÀM CHUNG một lần migration)
+## Phase C — Recall quality (#4 + #5, DO TOGETHER in a single migration)
 
-> Gộp 2 cải tiến vì cả hai đều yêu cầu re-create collection + re-embed.
-> Làm riêng = trả giá migration 2 lần.
+> The two improvements are merged because both require re-creating collections
+> + re-embedding. Doing them separately = paying the migration cost twice.
 
-### C1. Nâng embedding lên BAAI/bge-m3 (#5)
+### C1. Upgrade embedding to BAAI/bge-m3 (#5)
 
-- Đổi default `EMBED_MODEL=BAAI/bge-m3` (1024-dim, multilingual mạnh —
-  cải thiện rõ cho tiếng Việt). Image nặng thêm ~2.2GB — chấp nhận, vẫn bake.
-- Máy yếu giữ được MiniLM qua `.env` — mọi guard đã có sẵn.
+- Change the default to `EMBED_MODEL=BAAI/bge-m3` (1024-dim, strong
+  multilingual — a clear improvement for Vietnamese). The image grows ~2.2GB —
+  acceptable, still baked in.
+- Weaker machines can keep MiniLM via `.env` — all the guards already exist.
 
-### C2. Hybrid search dense + sparse BM25 (#4)
+### C2. Hybrid search: dense + sparse BM25 (#4)
 
 - **L4 documents:** `QdrantVectorStore(enable_hybrid=True, fastembed_sparse_model="Qdrant/bm25")`
-  — LlamaIndex lo toàn bộ (named vectors + RRF fusion). Yêu cầu collection mới.
-- **L2/L3 (collection tự quản):** thêm named sparse vector khi ghi
-  (`fastembed SparseTextEmbedding`), search chuyển sang Query API
-  `prefetch dense + sparse → fusion RRF`. Đây là phần code lớn nhất của cả kế hoạch
-  (~150 dòng thay đổi trong `memory_store.py`/`memories.py`).
+  — LlamaIndex handles everything (named vectors + RRF fusion). Requires a new collection.
+- **L2/L3 (self-managed collections):** add a named sparse vector on write
+  (`fastembed SparseTextEmbedding`), switch search to the Query API
+  (`prefetch dense + sparse → RRF fusion`). This is the largest code change of
+  the whole plan (~150 changed lines in `memory_store.py`/`memories.py`).
 
-### C3. Script migration `scripts/reembed.py`
+### C3. Migration script `scripts/reembed.py`
 
 ```
-1. Backup tự động trước khi chạy
-2. Tạo collections *_new với config mới (dense 1024 + sparse)
-3. Re-embed: L2/L3 từ payload text (đủ 100%), L4 từ file gốc /data/documents
-4. Verify số điểm khớp → đổi tên (delete cũ, rename mới) → cập nhật hermes_meta
-5. Rollback: restore từ snapshot bước 1
+1. Automatic backup before running
+2. Create *_new collections with the new config (dense 1024 + sparse)
+3. Re-embed: L2/L3 from payload text (100% coverage), L4 from original files in /data/documents
+4. Verify point counts match → swap names (delete old, rename new) → update hermes_meta
+5. Rollback: restore from the step-1 snapshot
 ```
 
-**Phase C tổng:** ~1-2 buổi. Rủi ro chính: tương thích version
-`llama-index-vector-stores-qdrant` 0.4.x với hybrid — kiểm tra sớm, nếu vướng
-thì nâng minor version có kiểm soát. Điểm quyết định trước khi làm: đo chất
-lượng bge-m3 vs MiniLM trên chính dữ liệu tiếng Việt của bạn (script so sánh
-recall trên 10-20 câu hỏi mẫu — nửa buổi, tránh migration vô ích).
+**Phase C total:** ~1-2 sessions. Main risk: `llama-index-vector-stores-qdrant`
+0.4.x compatibility with hybrid — check early; if blocked, do a controlled
+minor-version bump. Decision point before starting: measure bge-m3 vs MiniLM
+quality on your own Vietnamese data (a script comparing recall on 10-20 sample
+questions — half a session, avoids a pointless migration).
 
 ---
 
-## Phase D — Auto-ingest tài liệu theo project (#6)
+## Phase D — Auto-ingest documents per project (#6)
 
-**Vấn đề:** muốn tài liệu vào knowledge base phải curl thủ công.
+**Problem:** getting documents into the knowledge base requires manual curl.
 
-**Thiết kế:** watcher chạy trên **host** (container không thấy thư mục người dùng):
-- `scripts/ingest_watcher.py`: đọc danh sách thư mục project từ
-  `~/.hermes/projects.db` (tái dùng resolver) → theo dõi thư mục con `docs/`
-  của mỗi project (opt-in theo thư mục con, tránh ingest nhầm cả repo code)
-  → file mới/đổi (`.pdf .md .txt .docx`) → `POST /ingest/file` kèm đúng `project_id`.
-- Dedup: service đã content-address file gốc (sha) — watcher chỉ cần gửi,
-  trùng thì service bỏ qua (cần thêm check sha trước khi re-index ở service).
-- Chạy bằng launchd agent (giống backup), poll 60s — không cần lib `watchdog`,
-  giảm dependency.
+**Design:** a watcher running on the **host** (the container can't see the user's folders):
+- `scripts/ingest_watcher.py`: read the project folder list from
+  `~/.hermes/projects.db` (reusing the resolver) → watch each project's `docs/`
+  subfolder (opt-in per subfolder, avoids accidentally ingesting a whole code
+  repo) → new/changed files (`.pdf .md .txt .docx`) → `POST /ingest/file` with
+  the right `project_id`.
+- Dedup: the service already content-addresses original files (sha) — the
+  watcher just sends; the service skips duplicates (needs an added sha check
+  before re-indexing on the service side).
+- Run via a launchd agent (like the backup), 60s poll — no `watchdog` lib
+  needed, fewer dependencies.
 
-**Việc:** `scripts/ingest_watcher.py` (~120 dòng) · check-sha trong `documents.py`
-· plist + cài đặt trong setup.sh · README hướng dẫn quy ước thư mục `docs/`.
-~1 buổi. Quyết định cần chốt trước: quy ước thư mục nào được watch
-(đề xuất: `<project_folder>/docs/`).
+**Work:** `scripts/ingest_watcher.py` (~120 lines) · sha check in `documents.py`
+· plist + installation in setup.sh · README documenting the `docs/` folder
+convention. ~1 session. Decision to settle first: which folder gets watched
+(proposal: `<project_folder>/docs/`).
 
 ---
 
-## Tổng hợp thứ tự thực hiện
+## Execution order summary
 
-| Bước | Nội dung | Công sức | Phụ thuộc |
+| Step | Content | Effort | Depends on |
 |---|---|---|---|
-| A1 | Auto-consolidation (hook session_end + sweep) | nửa buổi | cần chốt LLM provider |
-| A2 | Auto-inject recall (pre_llm_call) | nửa buổi | discovery payload trước |
-| A3 | Quản lý memory (list/forget) | 2-3 giờ | — |
-| B1 | Backup tự động (launchd) | 30 phút | — |
-| C1-3 | bge-m3 + hybrid + migration | 1-2 buổi | benchmark trước khi migrate |
-| D | Auto-ingest watcher | 1 buổi | chốt quy ước thư mục docs/ |
+| A1 | Auto-consolidation (session_end hook + sweep) | half a session | LLM provider decision |
+| A2 | Auto-inject recall (pre_llm_call) | half a session | payload discovery first |
+| A3 | Memory management (list/forget) | 2-3 hours | — |
+| B1 | Automatic backup (launchd) | 30 minutes | — |
+| C1-3 | bge-m3 + hybrid + migration | 1-2 sessions | benchmark before migrating |
+| D | Auto-ingest watcher | 1 session | settle the docs/ folder convention |
 
-**Câu hỏi cần chốt trước khi code:**
-1. A1: dùng LLM nào cho consolidation? (đề xuất: `anthropic` + Haiku nếu có key,
-   không thì `ollama` profile + qwen3)
-2. D: đồng ý quy ước watch `<thư mục project>/docs/`?
+**Questions to settle before coding:**
+1. A1: which LLM for consolidation? (proposal: `anthropic` + Haiku if a key is
+   available, otherwise the `ollama` profile + qwen3)
+2. D: agree on watching `<project folder>/docs/`?

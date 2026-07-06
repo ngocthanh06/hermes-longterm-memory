@@ -281,16 +281,16 @@ def recall(
 
     lines: list[str] = []
     if mems:
-        lines.append("[Ghi nhớ dài hạn]")
+        lines.append("[Long-term memories]")
         lines += [f"- ({m['type']}, {_fmt_date(m['created_at'])}) {m['text']}" for m in mems]
     if history:
-        lines.append("[Hội thoại cũ liên quan]")
+        lines.append("[Related past conversations]")
         lines += [
             f"- ({h['session_id']}, {_fmt_date(h['timestamp'])}) {h['role']}: {h['content'][:300]}"
             for h in history
         ]
     if recent:
-        lines.append("[Các lượt gần nhất trong phiên này]")
+        lines.append("[Most recent turns in this session]")
         lines += [f"- {t['role']}: {t['content'][:300]}" for t in recent]
 
     return {

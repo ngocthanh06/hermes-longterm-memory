@@ -16,9 +16,9 @@
         <key>Minute</key>
         <integer>0</integer>
     </dict>
-    <!-- Máy ngủ qua 2:00 -> launchd tự chạy bù khi thức dậy. Máy TẮT hẳn ->
-         job bị bỏ qua, nên RunAtLoad chạy thêm một lần mỗi khi đăng nhập/bật
-         máy; retention 7 bản nên không lo rác. -->
+    <!-- Machine asleep past 2:00 -> launchd runs the job on wake. Machine
+         fully OFF -> the job is skipped, so RunAtLoad runs it once more on
+         every login/boot; 7-copy retention keeps the clutter in check. -->
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
