@@ -85,14 +85,19 @@ subscription của bạn mỗi lượt.
 Một trang tự chứa để khám phá và quản lý memory đã lưu — không cần thêm
 container, không tải asset ngoài, có theme sáng/tối:
 
-- **Graph view**: memory hiển thị thành đồ thị force-directed trên nền lưới
-  chấm bám theo camera. Cạnh nối là độ tương đồng vector thật (đậm hơn =
-  gần nghĩa hơn); màu = project, **hình dạng node = loại** (● fact,
-  ▲ preference, ◆ decision, ■ task — bấm nút `?` để xem chú giải),
-  kích thước = độ quan trọng, viền đứt = đã bị supersede. Rê chuột làm nổi
-  vùng lân cận của node; click mở panel chi tiết kèm hiệu ứng gợn sóng.
-  Kéo thả, pan, zoom mượt bằng con lăn, nút `Fit`, và click tiêu đề để
-  reset khung nhìn.
+- **Graph view — mỗi project là một thiên hà**: mỗi project có hố hấp dẫn
+  riêng, kéo memory của nó thành một cụm ("thiên hà") tách biệt trực quan
+  (có nhãn tên nổi ở tâm cụm) thay vì dồn thành một khối lộn xộn; liên kết
+  ngữ nghĩa xuyên project vẫn hiện như cầu nối mờ giữa các thiên hà mà
+  không kéo chúng dính vào nhau. **Hình dạng + màu cùng biểu diễn loại**
+  (bảng màu categorical đã kiểm chứng qua dataviz skill): ● fact — hành
+  tinh, ☄ preference — sao chổi (đuôi hướng ra xa tâm thiên hà), ✦ decision
+  — sao sáng (có quầng sáng), ◌ task — vệ tinh (có vòng quỹ đạo); bấm nút
+  `?` để xem chú giải. Kích thước = độ quan trọng, viền đứt = đã bị
+  supersede, vòng chấm = các memory khác cùng phiên nguồn với memory đang
+  chọn. Rê chuột làm nổi vùng lân cận của node; click mở panel chi tiết
+  kèm hiệu ứng gợn sóng. Kéo thả, pan, zoom mượt bằng con lăn, nút `Fit`,
+  và click tiêu đề để reset khung nhìn.
 - **Tìm kiếm Spotlight (⌘K)**: tìm ngữ nghĩa trực tiếp, có lưu truy vấn
   gần đây — kết quả khớp được làm nổi trên đồ thị và camera lướt tới kết
   quả tốt nhất.

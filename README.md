@@ -86,13 +86,19 @@ recall; memory injection is bounded (`HERMES_MEMORY_MAX_CONTEXT`, default
 A self-contained page for exploring and curating stored memory — no extra
 container, no external assets, light/dark themed:
 
-- **Graph view**: memories as a force-directed graph over a camera-aligned
-  dot grid. Edges are real vector similarity (darker = closer in meaning);
-  color = project, node **shape = type** (● fact, ▲ preference, ◆ decision,
-  ■ task — the `?` button shows the legend), size = importance, dashed
-  outline = superseded. Hover highlights a node's neighborhood; click opens
-  the detail panel with a selection ripple. Drag, pan, smooth wheel zoom,
-  `Fit`, and click the title to reset the view.
+- **Graph view — one galaxy per project**: each project gets its own
+  gravity well, clustering its memories into a visually separate "galaxy"
+  (named by a floating label at its center) instead of one undifferentiated
+  mass; cross-project semantic links still render as faint bridges between
+  galaxies without dragging them together. **Shape + color together encode
+  type** (validated categorical palette, dataviz skill): ● fact — planet,
+  ☄ preference — comet (tail points away from its galaxy's core), ✦ decision
+  — bright star (glow halo), ◌ task — satellite (orbit ring); the `?` button
+  shows the legend. Size = importance, dashed outline = superseded, a dotted
+  ring = other memories from the same source session as the current
+  selection. Hover highlights a node's neighborhood; click opens the detail
+  panel with a selection ripple. Drag, pan, smooth wheel zoom, `Fit`, and
+  click the title to reset the view.
 - **Spotlight search (⌘K)**: live semantic search with recent queries —
   matches highlight on the graph and the camera glides to the best hit.
 - **Filters**: project and type chips (click to solo/toggle), a superseded

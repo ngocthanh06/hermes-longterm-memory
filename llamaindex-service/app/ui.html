@@ -315,12 +315,13 @@
   </div>
   <div id="legend">
     <div class="lg-title">Legend</div>
-    <div class="lg-row"><span class="lg-glyph">●</span><b>fact</b> — objective info worth keeping (names, stack, deadlines, constraints)</div>
-    <div class="lg-row"><span class="lg-glyph">▲</span><b>preference</b> — how you like things done (style, tools, workflow)</div>
-    <div class="lg-row"><span class="lg-glyph">◆</span><b>decision</b> — a choice that was settled</div>
-    <div class="lg-row"><span class="lg-glyph">■</span><b>task</b> — a commitment or something still to do</div>
+    <div class="lg-row"><span class="lg-glyph" style="color:var(--s1)">●</span><b>fact</b> — planet: objective info worth keeping (names, stack, deadlines, constraints)</div>
+    <div class="lg-row"><span class="lg-glyph" style="color:var(--s2)">☄</span><b>preference</b> — comet (tail points away from its galaxy's core): how you like things done</div>
+    <div class="lg-row"><span class="lg-glyph" style="color:var(--s3)">✦</span><b>decision</b> — bright star (glow): a choice that was settled</div>
+    <div class="lg-row"><span class="lg-glyph" style="color:var(--s4)">◌</span><b>task</b> — satellite (orbit ring): a commitment or something still to do</div>
     <div class="lg-sep"></div>
-    <div class="lg-row"><span class="lg-glyph" style="color:var(--accent)">⬤</span><b>color</b> = project · <b>size</b> = importance</div>
+    <div class="lg-row"><b>shape + color</b> = type · <b>size</b> = importance</div>
+    <div class="lg-row"><b>position</b> = project — each project is its own galaxy, named by a floating label at its center</div>
     <div class="lg-row"><span class="lg-glyph">◌</span>dashed outline = superseded (replaced by a newer memory)</div>
     <div class="lg-row"><span class="lg-glyph">⟋</span>edge = semantic similarity — darker means closer in meaning</div>
     <div class="lg-row"><span class="lg-glyph" style="color:var(--accent)">◌</span>dotted ring = same source session as the selected memory ("Re-tag whole session" moves these together)</div>
@@ -385,12 +386,20 @@
 const $ = id => document.getElementById(id);
 const canvas = $("canvas"), ctx = canvas.getContext("2d");
 const TYPES = ["fact", "preference", "decision", "task"];
-const TYPE_GLYPH = { fact: "●", preference: "▲", decision: "◆", task: "■" };
-const SLOTS = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const TYPE_GLYPH = { fact: "●", preference: "☄", decision: "✦", task: "◌" };
+// Validated categorical palette (dataviz skill): fixed slot order, all 6
+// checks pass for this 4-subset. Color now identifies TYPE, not project —
+// project identity moved to spatial clustering (each project is a "galaxy",
+// see layoutGalaxies) plus a floating name label, so color+shape jointly
+// encode type (redundant on purpose: satisfies the CVD floor-band warning
+// this subset gets without adding a third channel).
+const TYPE_SLOTS = ["--s1", "--s2", "--s3", "--s4"];
+const TYPE_COLOR = { fact: "--s1", preference: "--s2", decision: "--s3", task: "--s4" };
 
 let nodes = [], edges = [], adj = new Map(), edgesByNode = new Map(), nodeById = new Map();
 let multiSel = new Set();   // ids picked with shift+click for bulk actions
-let projectColor = new Map();          // slug -> css var name (fixed once)
+let projectCenter = new Map();   // slug -> {x,y,r} galaxy center + footprint radius
+let knownProjects = new Set();   // tracks which projects we've already auto-shown once
 let lastSlugs = [];
 let selProjects = new Set(), selTypes = new Set(TYPES);
 let selected = null, hovered = null, highlight = null;   // highlight: Set of ids from search
@@ -412,7 +421,7 @@ function invalidate() { needsRender = true; }
 function readCss() {
   const s = getComputedStyle(document.documentElement);
   css = {};
-  for (const v of [...SLOTS, "--other", "--edge", "--text-primary", "--text-secondary",
+  for (const v of [...TYPE_SLOTS, "--other", "--edge", "--text-primary", "--text-secondary",
                    "--text-muted", "--surface-1", "--accent"])
     css[v] = s.getPropertyValue(v).trim();
 }
@@ -427,7 +436,37 @@ try {
   else if (mq.addListener) mq.addListener(onChange);  // older Safari
 } catch (e) { /* theme follows manual toggle only */ }
 
-function colorOf(n) { return css[projectColor.get(n.project_id) || "--other"]; }
+function colorOf(n) { return css[TYPE_COLOR[n.type]] || css["--other"]; }
+
+// ------------------------------------------------------------- galaxy layout
+// Each project gets its own gravity well ("galaxy"), centers placed around a
+// ring sized so denser projects don't overlap their neighbors. Order is
+// alphabetical (stable across reloads, same convention the old per-project
+// color used) so a galaxy doesn't jump to a new spot just because a sibling
+// gained or lost a memory.
+function galaxyFootprint(count) { return 60 * Math.sqrt(count + 1); }
+
+function layoutGalaxies(countsBySlug, slugs) {
+  if (slugs.length <= 1) {
+    projectCenter = new Map(slugs.map(s => [s, { x: 0, y: 0, r: galaxyFootprint(countsBySlug[s] || 0) }]));
+    return;
+  }
+  const footprints = slugs.map(s => galaxyFootprint(countsBySlug[s] || 0));
+  const sum = footprints.reduce((a, b) => a + b, 0);
+  // Ring circumference must fit every galaxy's diameter plus a wide gap.
+  // The multiplier matters more than it looks: fitView() auto-zooms to the
+  // total bounding box, so widening the ORBIT without widening each galaxy's
+  // own footprint is what actually buys visible empty space between
+  // clusters after the zoom-to-fit — screen-space node/label size stays
+  // fixed while the inter-cluster gap grows relative to it.
+  const orbit = Math.max(320, (sum * 9) / (2 * Math.PI));
+  const next = new Map();
+  slugs.forEach((s, i) => {
+    const a = (i / slugs.length) * Math.PI * 2 - Math.PI / 2;
+    next.set(s, { x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, r: footprints[i] });
+  });
+  projectCenter = next;
+}
 // Local time, not UTC — "which memory is newer" must match the user's clock.
 const pad2 = v => String(v).padStart(2, "0");
 function fmtDate(ts) {
@@ -465,12 +504,22 @@ async function load() {
   const inc = $("showSuperseded").checked;
   const data = await (await fetch(`/memory/graph?include_superseded=${inc}`)).json();
   const old = new Map(nodes.map(n => [n.id, n]));
-  const spread = 60 * Math.sqrt(data.nodes.length + 1);  // scale with graph size
+
+  // Galaxy centers must exist before nodes are placed, so a brand-new memory
+  // spawns inside its own project's cluster instead of at the shared origin.
+  const countsBySlug = {};
+  for (const n of data.nodes) countsBySlug[n.project_id] = (countsBySlug[n.project_id] || 0) + 1;
+  const gxSlugs = Object.keys(countsBySlug).sort();
+  layoutGalaxies(countsBySlug, gxSlugs);
+
   nodes = data.nodes.map(n => {
     const prev = old.get(n.id);
-    const a = Math.random() * Math.PI * 2, r = spread * (0.4 + Math.random());
+    const center = projectCenter.get(n.project_id) || { x: 0, y: 0 };
+    const spread = galaxyFootprint(countsBySlug[n.project_id]);
+    const a = Math.random() * Math.PI * 2, r = spread * (0.35 + Math.random() * 0.65);
     return Object.assign(n, {
-      x: prev ? prev.x : Math.cos(a) * r, y: prev ? prev.y : Math.sin(a) * r,
+      x: prev ? prev.x : center.x + Math.cos(a) * r,
+      y: prev ? prev.y : center.y + Math.sin(a) * r,
       vx: 0, vy: 0, hs: 0,
     });
   });
@@ -484,13 +533,11 @@ async function load() {
       edgesByNode.get(id).push(e);
     }
   }
-  // Fixed-order color assignment: alphabetical over the FULL dataset, never
-  // re-assigned by filters; projects beyond 8 fold into the neutral slot.
-  const slugs = [...new Set(nodes.map(n => n.project_id))].sort();
+  const slugs = gxSlugs;
   for (const slug of slugs) {
-    if (!projectColor.has(slug)) {
+    if (!knownProjects.has(slug)) {
+      knownProjects.add(slug);
       selProjects.add(slug);  // newly seen projects start visible
-      projectColor.set(slug, projectColor.size < 8 ? SLOTS[projectColor.size] : "--other");
     }
   }
   lastSlugs = slugs;
@@ -512,7 +559,9 @@ function buildChips(slugs) {
     const chip = document.createElement("span");
     chip.className = "chip" + (selProjects.has(slug) ? "" : " off");
     chip.dataset.slug = slug;
-    chip.innerHTML = `<span class="dot" style="background:${css[projectColor.get(slug)]}"></span>${escapeHtml(slug)} <span class="n">${count}</span><span class="edit" title="Rename project">✎</span>`;
+    // Projects no longer carry a color (position/galaxy is their identity
+    // now) — a plain text pill, same interaction as before.
+    chip.innerHTML = `${escapeHtml(slug)} <span class="n">${count}</span><span class="edit" title="Rename project">✎</span>`;
     chip.onclick = () => { toggleSet(selProjects, slug, slugs); refreshChips(); };
     chip.querySelector(".edit").onclick = e => { e.stopPropagation(); renameProject(slug); };
     pc.appendChild(chip);
@@ -524,7 +573,7 @@ function buildChips(slugs) {
     const chip = document.createElement("span");
     chip.className = "chip" + (selTypes.has(t) ? "" : " off");
     chip.dataset.type = t;
-    chip.innerHTML = `${TYPE_GLYPH[t]} ${t} <span class="n">${count}</span>`;
+    chip.innerHTML = `<span class="dot" style="background:${css[TYPE_COLOR[t]]}"></span>${TYPE_GLYPH[t]} ${t} <span class="n">${count}</span>`;
     chip.onclick = () => { toggleSet(selTypes, t, TYPES); refreshChips(); };
     tc.appendChild(chip);
   }
@@ -599,13 +648,26 @@ function step() {
       let dx = a.x - b.x, dy = a.y - b.y;
       let d2 = dx * dx + dy * dy || 1;
       if (d2 > cutoff) continue;
-      const f = charge / d2 * alpha;
+      // Cross-galaxy repulsion is damped: full-strength repulsion between
+      // every pair (regardless of project) is what smeared clusters into
+      // one shared blob — two galaxies pushing on each other's members
+      // overpowers each one's own gravity well. Within a galaxy, repulsion
+      // stays full strength (still need internal spacing for readability).
+      const damp = a.project_id === b.project_id ? 1 : 0.22;
+      const f = charge / d2 * alpha * damp;
       const d = Math.sqrt(d2);
       dx /= d; dy /= d;
       a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
     }
   }
   for (const e of visEdges) {
+    // Cross-galaxy edges are excluded from the simulation entirely — they
+    // still DRAW (a real semantic link between projects reads as a visible
+    // "bridge" in draw()), but must not exert force. Their target distance
+    // (~90-350) is tiny next to the gap between galaxy centers, so even a
+    // soft spring never stops pulling and drags the whole galaxy toward its
+    // neighbor — that's what was blurring every cluster into one blob.
+    if (e.a.project_id !== e.b.project_id) continue;
     const ideal = 90 + (1 - e.weight) * 260;
     let dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -614,10 +676,13 @@ function step() {
     e.a.vx += dx * f; e.a.vy += dy * f; e.b.vx -= dx * f; e.b.vy -= dy * f;
   }
   for (const n of vis) {
-    // Gentle centering, weighted by importance: important memories gravitate
-    // toward the middle of the map, peripheral ones drift outward.
-    const g = 0.0003 + 0.0004 * (n.importance || 0.5);
-    n.vx -= n.x * g * alpha; n.vy -= n.y * g * alpha;
+    // Gravity toward the memory's OWN galaxy center (not a shared origin):
+    // this is what makes each project cluster into a separate "galaxy".
+    // Still importance-weighted — important memories sit closer to their
+    // galaxy's core, peripheral ones drift toward its rim.
+    const center = projectCenter.get(n.project_id) || { x: 0, y: 0 };
+    const g = 0.0016 + 0.0012 * (n.importance || 0.5);
+    n.vx -= (n.x - center.x) * g * alpha; n.vy -= (n.y - center.y) * g * alpha;
     if (dragging === n) { n.vx = n.vy = 0; continue; }
     n.x += n.vx; n.y += n.vy; n.vx *= 0.88; n.vy *= 0.88;
   }
@@ -702,17 +767,23 @@ function screenToWorld(sx, sy) {
 
 function drawShape(x, y, r, type) {
   ctx.beginPath();
-  if (type === "decision") {          // diamond
-    ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y);
+  if (type === "decision") {          // ✦ sparkle/star — "brightest object"
+    const inner = r * 0.42;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+      const rr = i % 2 === 0 ? r : inner;
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
     ctx.closePath();
-  } else if (type === "task") {       // (rounded) square
-    const s = r * 0.88;
-    if (ctx.roundRect) ctx.roundRect(x - s, y - s, s * 2, s * 2, r * 0.35);
+  } else if (type === "task") {       // ◌ satellite — small square core (ring drawn separately)
+    const s = r * 0.7;
+    if (ctx.roundRect) ctx.roundRect(x - s, y - s, s * 2, s * 2, r * 0.3);
     else ctx.rect(x - s, y - s, s * 2, s * 2);
-  } else if (type === "preference") { // triangle
+  } else if (type === "preference") { // ☄ comet head (tail drawn separately)
     ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.95, y + r * 0.78); ctx.lineTo(x - r * 0.95, y + r * 0.78);
     ctx.closePath();
-  } else {                            // fact: circle
+  } else {                            // fact: circle — "planet"
     ctx.arc(x, y, r, 0, 7);
   }
 }
@@ -733,6 +804,25 @@ function draw() {
       ctx.rect(gx, gy, 1.4, 1.4);
   ctx.fill();
   ctx.globalAlpha = 1;
+  const off_l = -60, off_t = -60, off_r = viewW + 60, off_b = viewH + 60;
+
+  // Galaxy name labels: one floating label per project, at its gravity
+  // center, drawn behind everything else — a fixed screen size (not scaled
+  // by zoom) so the cluster stays identifiable at any distance.
+  if (projectCenter.size > 1) {
+    ctx.textAlign = "center";
+    ctx.font = "600 13px -apple-system, sans-serif";
+    for (const [slug, c] of projectCenter) {
+      if (!selProjects.has(slug)) continue;
+      const [x, y] = worldToScreen(c.x, c.y - c.r);
+      if (x < off_l - 100 || x > off_r + 100 || y < off_t - 40 || y > off_b + 40) continue;
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = css["--text-muted"];
+      ctx.fillText(slug, x, y - 14);
+    }
+    ctx.textAlign = "left";
+    ctx.globalAlpha = 1;
+  }
 
   const neighbors = selected ? (adj.get(selected.id) || new Set()) : null;
   const hoverNb = (!selected && hovered) ? (adj.get(hovered.id) || new Set()) : null;
@@ -740,7 +830,6 @@ function draw() {
     (highlight && !highlight.has(n.id)) ||
     (selected && n !== selected && !(neighbors && neighbors.has(n.id))) ||
     (hoverNb && n !== hovered && !hoverNb.has(n.id));
-  const off_l = -60, off_t = -60, off_r = viewW + 60, off_b = viewH + 60;
 
   for (const e of visEdges) {
     const [x1, y1] = worldToScreen(e.a.x, e.a.y);
@@ -792,8 +881,36 @@ function draw() {
     const dim = dimmed(n);
     ctx.globalAlpha = dim ? 0.13 : (n.superseded ? 0.45 : 1);
     ctx.fillStyle = colorOf(n);
+
+    if (n.type === "preference" && !dim) {
+      // Comet tail: streaks away from the memory's own galaxy center, like
+      // a comet trailing away from the star it orbits.
+      const c = projectCenter.get(n.project_id) || { x: 0, y: 0 };
+      let tx = n.x - c.x, ty = n.y - c.y;
+      const tl = Math.hypot(tx, ty) || 1;
+      tx /= tl; ty /= tl;
+      const len = rad * 3.2;
+      const grad = ctx.createLinearGradient(x, y, x - tx * len, y - ty * len);
+      grad.addColorStop(0, ctx.fillStyle);
+      grad.addColorStop(1, "transparent");
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = Math.max(1.4, rad * 0.35);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - tx * len, y - ty * len); ctx.stroke();
+    }
+    if (n.type === "decision" && !dim) {
+      // Bright star: a soft glow halo behind the sparkle shape.
+      ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 12 * cam.k;
+    }
     drawShape(x, y, rad, n.type);
     ctx.fill();
+    ctx.shadowBlur = 0;
+    if (n.type === "task" && !dim) {
+      // Satellite orbit ring.
+      ctx.globalAlpha = (dim ? 0.13 : (n.superseded ? 0.45 : 1)) * 0.6;
+      ctx.strokeStyle = colorOf(n); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(x, y, rad * 1.7, rad * 0.8, -0.5, 0, 7); ctx.stroke();
+      ctx.globalAlpha = dim ? 0.13 : (n.superseded ? 0.45 : 1);
+    }
     if (n.superseded) {
       ctx.setLineDash([3, 3]); ctx.strokeStyle = css["--text-muted"];
       ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
@@ -889,8 +1006,8 @@ canvas.addEventListener("mousemove", e => {
     if (n) {
       tip.style.display = "block";
       tip.innerHTML = `<div class="t-text">${escapeHtml(n.text.slice(0, 220))}${n.text.length > 220 ? "…" : ""}</div>
-        <div class="t-meta"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${colorOf(n)};display:inline-block"></span>
-        ${escapeHtml(n.project_id)} <span class="badge">${TYPE_GLYPH[n.type] || ""} ${n.type}</span> imp ${n.importance} · ${fmtDate(n.created_at)}${n.superseded ? " · superseded" : ""}</div>`;
+        <div class="t-meta">${escapeHtml(n.project_id)}
+        <span class="badge"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:4px"></span>${TYPE_GLYPH[n.type] || ""} ${n.type}</span> imp ${n.importance} · ${fmtDate(n.created_at)}${n.superseded ? " · superseded" : ""}</div>`;
       tip.style.left = Math.min(e.offsetX + 14, canvas.getBoundingClientRect().width - 350) + "px";
       tip.style.top = (e.offsetY + 14) + "px";
     } else tip.style.display = "none";
@@ -949,8 +1066,8 @@ function select(n, withRipple = true) {
   panel.style.display = "block";
   $("pText").textContent = n.text;
   $("pMeta").innerHTML = `
-    <tr><td>Project</td><td><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:6px"></span>${escapeHtml(n.project_id)}</td></tr>
-    <tr><td>Type</td><td><span class="badge">${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td></tr>
+    <tr><td>Project</td><td>${escapeHtml(n.project_id)} <span style="color:var(--text-muted)">(galaxy)</span></td></tr>
+    <tr><td>Type</td><td><span class="badge"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:4px"></span>${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td></tr>
     <tr><td>Importance</td><td>${n.importance}</td></tr>
     <tr><td>Created</td><td>${fmtDateTime(n.created_at)}</td></tr>
     <tr><td>Session</td><td>${escapeHtml(n.session_id || "—")}</td></tr>
@@ -1097,7 +1214,6 @@ function openModal({ title, message, options, current, value, confirmLabel }) {
         row.className = "opt" + (slug === current ? " current" : "");
         row.innerHTML =
           `<input type="radio" name="projOpt" value="${escapeHtml(slug)}"${slug === current ? " checked" : ""}>` +
-          `<span class="dot" style="background:${css[projectColor.get(slug)] || css["--other"]}"></span>` +
           `<span>${escapeHtml(slug)}</span>` +
           (slug === current ? '<span style="color:var(--text-muted);font-size:11px">· current</span>' : "");
         opts.appendChild(row);
@@ -1186,9 +1302,7 @@ async function renameProject(slug) {
   if (!to || to === slug) return;
   const r = await patchJSON(`/memory/projects/${encodeURIComponent(slug)}`, { project_id: to });
   if (!r) return;
-  // Color follows the entity: the renamed project keeps its color slot.
-  if (projectColor.has(slug) && !projectColor.has(to)) projectColor.set(to, projectColor.get(slug));
-  projectColor.delete(slug);
+  if (knownProjects.has(slug)) { knownProjects.delete(slug); knownProjects.add(to); }
   if (selProjects.has(slug)) { selProjects.delete(slug); selProjects.add(to); }
   toast(`Renamed "${slug}" → "${to}".`);
   select(null); await load();
@@ -1371,9 +1485,9 @@ function renderList() {
   const rows = [...visNodes]
     .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
     .map(n => `<tr data-id="${n.id}" class="${n.superseded ? "ghosted" : ""}">
-      <td><span class="dot" style="background:${colorOf(n)}"></span>${escapeHtml(n.project_id)}</td>
+      <td>${escapeHtml(n.project_id)}</td>
       <td>${escapeHtml(n.text)}</td>
-      <td><span class="badge">${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td>
+      <td><span class="badge"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:4px"></span>${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td>
       <td>${n.importance}</td>
       <td>${fmtDateTime(n.created_at)}</td></tr>`).join("");
   $("list").innerHTML = `<table>
