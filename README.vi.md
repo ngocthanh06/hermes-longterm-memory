@@ -32,7 +32,7 @@ LlamaIndex service (Docker, 127.0.0.1:8800)
 Qdrant (Docker, 127.0.0.1:6333) — named volume `qdrant_data`
 ```
 
-![alt text](image.png)
+![alt text](image-1.png)
 
 Vòng đời memory chạy **tự động hoàn toàn**: ghi → tự nhắc lại → chưng cất →
 quên có kiểm soát (tool `forget_about`) → backup đêm (2:00, giữ 7 bản).

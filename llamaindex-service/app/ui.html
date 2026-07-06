@@ -428,7 +428,18 @@ try {
 } catch (e) { /* theme follows manual toggle only */ }
 
 function colorOf(n) { return css[projectColor.get(n.project_id) || "--other"]; }
-function fmtDate(ts) { return ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "?"; }
+// Local time, not UTC — "which memory is newer" must match the user's clock.
+const pad2 = v => String(v).padStart(2, "0");
+function fmtDate(ts) {
+  if (!ts) return "?";
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function fmtDateTime(ts) {
+  if (!ts) return "?";
+  const d = new Date(ts * 1000);
+  return `${fmtDate(ts)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
 function radius(n) { return 6 + (n.importance || 0.5) * 8; }
 function visible(n) { return selProjects.has(n.project_id) && selTypes.has(n.type); }
 
@@ -941,7 +952,7 @@ function select(n, withRipple = true) {
     <tr><td>Project</td><td><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:6px"></span>${escapeHtml(n.project_id)}</td></tr>
     <tr><td>Type</td><td><span class="badge">${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td></tr>
     <tr><td>Importance</td><td>${n.importance}</td></tr>
-    <tr><td>Created</td><td>${fmtDate(n.created_at)}</td></tr>
+    <tr><td>Created</td><td>${fmtDateTime(n.created_at)}</td></tr>
     <tr><td>Session</td><td>${escapeHtml(n.session_id || "—")}</td></tr>
     <tr><td>Agent</td><td>${escapeHtml(n.source_agent || "—")}</td></tr>
     <tr><td>Status</td><td>${n.superseded ? "superseded" : "active"}</td></tr>
@@ -1364,7 +1375,7 @@ function renderList() {
       <td>${escapeHtml(n.text)}</td>
       <td><span class="badge">${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td>
       <td>${n.importance}</td>
-      <td>${fmtDate(n.created_at)}</td></tr>`).join("");
+      <td>${fmtDateTime(n.created_at)}</td></tr>`).join("");
   $("list").innerHTML = `<table>
     <thead><tr><th>Project</th><th>Memory</th><th>Type</th><th>Imp.</th><th>Created</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
