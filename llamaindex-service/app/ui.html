@@ -422,7 +422,7 @@ function readCss() {
   const s = getComputedStyle(document.documentElement);
   css = {};
   for (const v of [...TYPE_SLOTS, "--other", "--edge", "--text-primary", "--text-secondary",
-                   "--text-muted", "--surface-1", "--accent"])
+                   "--text-muted", "--surface-1", "--surface-2", "--accent"])
     css[v] = s.getPropertyValue(v).trim();
 }
 readCss();
@@ -437,6 +437,21 @@ try {
 } catch (e) { /* theme follows manual toggle only */ }
 
 function colorOf(n) { return css[TYPE_COLOR[n.type]] || css["--other"]; }
+
+// Deterministic pseudo-random in [0,1) for an integer cell — used so the
+// starfield looks fixed in place (same stars every redraw) instead of
+// flickering, without having to store per-star state anywhere.
+function hash2(a, b) {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b);
+  h ^= Math.imul(b ^ 0x27d4eb2f, 0xc2b2ae35);
+  h = (h ^ (h >>> 15)) >>> 0;
+  return (h % 100000) / 100000;
+}
+function hexToRgba(hex, a) {
+  const h = (hex || "#888888").replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16) || 0, g = parseInt(h.slice(2, 4), 16) || 0, b = parseInt(h.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${a})`;
+}
 
 // ------------------------------------------------------------- galaxy layout
 // Each project gets its own gravity well ("galaxy"), centers placed around a
@@ -562,7 +577,13 @@ function buildChips(slugs) {
     // Projects no longer carry a color (position/galaxy is their identity
     // now) — a plain text pill, same interaction as before.
     chip.innerHTML = `${escapeHtml(slug)} <span class="n">${count}</span><span class="edit" title="Rename project">✎</span>`;
-    chip.onclick = () => { toggleSet(selProjects, slug, slugs); refreshChips(); };
+    chip.onclick = () => {
+      toggleSet(selProjects, slug, slugs);
+      refreshChips();
+      // Only fly there if the click left it visible — toggling it OFF
+      // (hiding the galaxy) shouldn't also point the camera at it.
+      if (selProjects.has(slug)) flyToGalaxy(slug);
+    };
     chip.querySelector(".edit").onclick = e => { e.stopPropagation(); renameProject(slug); };
     pc.appendChild(chip);
   }
@@ -717,6 +738,16 @@ function fitView() {
   };
 }
 
+function flyToGalaxy(slug) {
+  const c = projectCenter.get(slug);
+  if (!c) return;
+  const pad = 90, span = Math.max(c.r * 2, 200);
+  camTarget = {
+    x: c.x, y: c.y,
+    k: Math.min(2.2, Math.max(0.25, Math.min((viewW - pad * 2) / span, (viewH - pad * 2) / span))),
+  };
+}
+
 function glideCamera() {
   if (!camTarget) return;
   cam.x += (camTarget.x - cam.x) * 0.18;
@@ -790,21 +821,64 @@ function drawShape(x, y, r, type) {
 
 function draw() {
   ctx.clearRect(0, 0, viewW, viewH);
-  // Camera-aligned dot grid: a spatial anchor so panning/zooming reads as
-  // moving over a surface instead of floating in a void.
-  let spacing = 56 * cam.k;
-  while (spacing < 18) spacing *= 2;  // keep density sane when zoomed out
-  const gx0 = ((viewW / 2 - cam.x * cam.k) % spacing + spacing) % spacing;
-  const gy0 = ((viewH / 2 - cam.y * cam.k) % spacing + spacing) % spacing;
-  ctx.globalAlpha = 0.3;
-  ctx.fillStyle = css["--edge"];
-  ctx.beginPath();
-  for (let gx = gx0 - spacing; gx < viewW; gx += spacing)
-    for (let gy = gy0 - spacing; gy < viewH; gy += spacing)
-      ctx.rect(gx, gy, 1.4, 1.4);
-  ctx.fill();
-  ctx.globalAlpha = 1;
   const off_l = -60, off_t = -60, off_r = viewW + 60, off_b = viewH + 60;
+
+  // Nebula glow: one soft, accent-tinted haze hugging each visible galaxy —
+  // deliberately the SAME hue everywhere (purely atmospheric) so it never
+  // competes with color-as-type on the nodes themselves, and sized to stay
+  // close to its own cluster instead of washing out the gaps between
+  // galaxies (that gap is the whole point of the layout).
+  for (const [slug, c] of projectCenter) {
+    if (!selProjects.has(slug)) continue;
+    const [x, y] = worldToScreen(c.x, c.y);
+    const rad = Math.max(c.r, 120) * cam.k * 1.15;
+    if (x + rad < 0 || x - rad > viewW || y + rad < 0 || y - rad > viewH) continue;
+    const ng = ctx.createRadialGradient(x, y, 0, x, y, rad);
+    ng.addColorStop(0, hexToRgba(css["--accent"], 0.09));
+    ng.addColorStop(1, hexToRgba(css["--accent"], 0));
+    ctx.fillStyle = ng;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+  }
+
+  // Starfield: world-anchored so it pans/zooms like a real backdrop (not a
+  // screen-locked texture), three fixed brightness tiers batched into one
+  // fill call each (thousands of individually-styled dots would be slow).
+  // Cell coordinates are hashed for a stable per-star look — same stars
+  // every redraw, no per-frame flicker. --text-muted (not --edge) for
+  // contrast: this needs to read clearly even on a light surface.
+  {
+    let cell = 50;
+    while (cell * cam.k < 16) cell *= 2;  // cap on-screen density when zoomed out
+    const [wx0, wy0] = screenToWorld(0, 0);
+    const [wx1, wy1] = screenToWorld(viewW, viewH);
+    const ix0 = Math.floor(Math.min(wx0, wx1) / cell) - 1, ix1 = Math.ceil(Math.max(wx0, wx1) / cell) + 1;
+    const iy0 = Math.floor(Math.min(wy0, wy1) / cell) - 1, iy1 = Math.ceil(Math.max(wy0, wy1) / cell) + 1;
+    const tiers = [
+      { size: 1.2, alpha: 0.38 }, // dim — most stars
+      { size: 1.8, alpha: 0.55 }, // mid
+      { size: 2.6, alpha: 0.8 },  // bright — rare
+    ];
+    ctx.fillStyle = css["--text-muted"];
+    for (const tier of tiers) {
+      ctx.globalAlpha = tier.alpha;
+      ctx.beginPath();
+      for (let ix = ix0; ix <= ix1; ix++) {
+        for (let iy = iy0; iy <= iy1; iy++) {
+          const h = hash2(ix, iy);
+          const bucket = h < 0.72 ? 0 : h < 0.94 ? 1 : 2;  // 72% / 22% / 6%
+          if (bucket !== tiers.indexOf(tier)) continue;
+          // small deterministic jitter so it doesn't read as a rigid grid
+          const jx = (hash2(ix * 3 + 1, iy) - 0.5) * cell * 0.7;
+          const jy = (hash2(ix, iy * 5 + 7) - 0.5) * cell * 0.7;
+          const [sx, sy] = worldToScreen(ix * cell + jx, iy * cell + jy);
+          if (sx < off_l || sx > off_r || sy < off_t || sy > off_b) continue;
+          ctx.rect(sx, sy, tier.size, tier.size);
+        }
+      }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // Galaxy name labels: one floating label per project, at its gravity
   // center, drawn behind everything else — a fixed screen size (not scaled
