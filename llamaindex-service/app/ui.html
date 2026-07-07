@@ -472,6 +472,13 @@ function hexToRgba(hex, a) {
   const r = parseInt(h.slice(0, 2), 16) || 0, g = parseInt(h.slice(2, 4), 16) || 0, b = parseInt(h.slice(4, 6), 16) || 0;
   return `rgba(${r},${g},${b},${a})`;
 }
+// Stable per-string hash — gives each galaxy's spiral arms a fixed, distinct
+// rotation (so a project's swirl doesn't change shape between reloads).
+function strHash(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
 
 // ------------------------------------------------------------- galaxy layout
 // Each project gets its own gravity well ("galaxy"), centers placed around a
@@ -483,9 +490,12 @@ function galaxyFootprint(count) { return 60 * Math.sqrt(count + 1); }
 
 let orbitRadius = 0;  // 0 = single galaxy, no orbit ring / core hub to draw
 
+function galaxyRot(slug) { return (strHash(slug) % 1000) / 1000 * Math.PI * 2; }
+
 function layoutGalaxies(countsBySlug, slugs) {
   if (slugs.length <= 1) {
-    projectCenter = new Map(slugs.map(s => [s, { x: 0, y: 0, r: galaxyFootprint(countsBySlug[s] || 0) }]));
+    projectCenter = new Map(slugs.map(s =>
+      [s, { x: 0, y: 0, r: galaxyFootprint(countsBySlug[s] || 0), rot: galaxyRot(s) }]));
     orbitRadius = 0;
     return;
   }
@@ -502,7 +512,7 @@ function layoutGalaxies(countsBySlug, slugs) {
   const next = new Map();
   slugs.forEach((s, i) => {
     const a = (i / slugs.length) * Math.PI * 2 - Math.PI / 2;
-    next.set(s, { x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, r: footprints[i] });
+    next.set(s, { x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, r: footprints[i], rot: galaxyRot(s) });
   });
   projectCenter = next;
 }
@@ -928,6 +938,29 @@ function draw() {
     ng.addColorStop(1, hexToRgba(css["--accent"], 0));
     ctx.fillStyle = ng;
     ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+
+    // Spiral arms: a cheap, image-free suggestion of galactic structure —
+    // two tapering strokes per galaxy, static (no animation, so idle
+    // frames still skip drawing entirely). Each galaxy's rotation is fixed
+    // (c.rot) so the swirl doesn't reshuffle between reloads.
+    const steps = 26, turns = 1.15, squash = 0.55;
+    for (let arm = 0; arm < 2; arm++) {
+      const armOffset = c.rot + arm * Math.PI;
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const theta = t * Math.PI * 2 * turns + armOffset;
+        const rr = rad * 0.9 * Math.pow(t, 0.72);
+        const px = x + Math.cos(theta) * rr, py = y + Math.sin(theta) * rr * squash;
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = hexToRgba(css["--accent"], 0.09 - arm * 0.015);
+      ctx.lineWidth = Math.max(1, rad * 0.045);
+      ctx.stroke();
+    }
+    // Galactic core: a small bright point at the center of the swirl.
+    ctx.fillStyle = hexToRgba(css["--accent"], 0.4);
+    ctx.beginPath(); ctx.arc(x, y, Math.max(2, rad * 0.05), 0, 7); ctx.fill();
   }
 
   // Starfield: world-anchored so it pans/zooms like a real backdrop (not a
