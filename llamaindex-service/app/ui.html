@@ -427,6 +427,7 @@ let cam = { x: 0, y: 0, k: 1 };
 let camTarget = null;  // when set, the camera glides toward it each frame
 let wheelGlide = null; // wheel zoom eases toward this {k, sx, sy, wx, wy} each frame
 let alpha = 0, dragging = null, panning = false, lastMouse = null, fitted = true;
+let animT = 0;  // slow ambient clock — drives the gentle spiral-arm drift
 let ripple = null;     // {node, t} selection ripple animation
 let css = {};
 // Perf: cached view size (getBoundingClientRect per node per frame forces
@@ -491,11 +492,14 @@ function galaxyFootprint(count) { return 60 * Math.sqrt(count + 1); }
 let orbitRadius = 0;  // 0 = single galaxy, no orbit ring / core hub to draw
 
 function galaxyRot(slug) { return (strHash(slug) % 1000) / 1000 * Math.PI * 2; }
+// Small per-galaxy drift speed (+ direction) for the ambient spiral-arm
+// rotation — a distinct hash seed so it doesn't correlate with galaxyRot.
+function galaxySpin(slug) { return ((strHash(slug + "_spin") % 1000) / 1000 - 0.5) * 0.36; }
 
 function layoutGalaxies(countsBySlug, slugs) {
   if (slugs.length <= 1) {
     projectCenter = new Map(slugs.map(s =>
-      [s, { x: 0, y: 0, r: galaxyFootprint(countsBySlug[s] || 0), rot: galaxyRot(s) }]));
+      [s, { x: 0, y: 0, r: galaxyFootprint(countsBySlug[s] || 0), rot: galaxyRot(s), spin: galaxySpin(s) }]));
     orbitRadius = 0;
     return;
   }
@@ -512,7 +516,7 @@ function layoutGalaxies(countsBySlug, slugs) {
   const next = new Map();
   slugs.forEach((s, i) => {
     const a = (i / slugs.length) * Math.PI * 2 - Math.PI / 2;
-    next.set(s, { x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, r: footprints[i], rot: galaxyRot(s) });
+    next.set(s, { x: Math.cos(a) * orbit, y: Math.sin(a) * orbit, r: footprints[i], rot: galaxyRot(s), spin: galaxySpin(s) });
   });
   projectCenter = next;
 }
@@ -970,20 +974,30 @@ function draw() {
     ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
 
     // Spiral arms: a cheap, image-free suggestion of galactic structure —
-    // two tapering strokes per galaxy, static (no animation, so idle
-    // frames still skip drawing entirely). Each galaxy's rotation is fixed
-    // (c.rot) so the swirl doesn't reshuffle between reloads.
-    const steps = 26, turns = 1.15, squash = 0.55;
+    // two soft tapering curves per galaxy, drifting slowly around the core
+    // (c.spin, a per-galaxy speed/direction so they don't all turn in
+    // lockstep). c.rot is the fixed starting orientation, so the swirl
+    // still starts from a stable shape each reload; animT just nudges it.
+    const steps = 30, turns = 1.15, squash = 0.55;
     for (let arm = 0; arm < 2; arm++) {
-      const armOffset = c.rot + arm * Math.PI;
-      ctx.beginPath();
+      const armOffset = c.rot + arm * Math.PI + animT * c.spin;
+      const pts = [];
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         const theta = t * Math.PI * 2 * turns + armOffset;
         const rr = rad * 0.9 * Math.pow(t, 0.72);
-        const px = x + Math.cos(theta) * rr, py = y + Math.sin(theta) * rr * squash;
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        pts.push([x + Math.cos(theta) * rr, y + Math.sin(theta) * rr * squash]);
       }
+      // Quadratic-through-midpoints: a standard trick for turning a sampled
+      // polyline into a smooth curve without full spline math.
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+        ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+      }
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last[0], last[1]);
       ctx.strokeStyle = hexToRgba(css["--accent"], 0.09 - arm * 0.015);
       ctx.lineWidth = Math.max(1, rad * 0.045);
       ctx.stroke();
@@ -1176,9 +1190,12 @@ function loop() {
   step();
   glideCamera();
   glideWheel();
-  // Idle frames skip drawing entirely — redraw only while something moves
-  // (sim, camera glide, ripple, hover easing) or after an interaction.
-  if (needsRender || simActive || camTarget || wheelGlide || ripple || hoverEasing) {
+  animT += 0.0022;  // ~one slow drift cycle per couple minutes, not a spin
+  // Idle frames skip drawing entirely EXCEPT the ambient galaxy drift, which
+  // is deliberately always-on (a gentle, continuous effect) — everything
+  // else still only redraws while something moves or after an interaction.
+  const animActive = projectCenter.size > 0;
+  if (needsRender || simActive || camTarget || wheelGlide || ripple || hoverEasing || animActive) {
     draw();
     needsRender = false;
   }
