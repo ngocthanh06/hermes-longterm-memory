@@ -310,6 +310,18 @@ def test_rename_project_across_collections(client):
     assert not any(memory_store.rename_project(client, "ghost", "x").values())
 
 
+def test_set_fact_type(client):
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "reclassify me", "type": "fact"}])
+    fact_id = memories.list_facts(client)[0]["id"]
+
+    assert memories.set_fact_type(client, fact_id, "decision") is True
+    assert memories.list_facts(client)[0]["type"] == "decision"
+    assert memories.set_fact_type(client, fact_id, "not-a-real-type") is False
+    assert memories.list_facts(client)[0]["type"] == "decision"  # unchanged
+    assert memories.set_fact_type(client, "00000000-0000-0000-0000-00000000dead", "task") is False
+
+
 def test_delete_fact_hard_deletes(client):
     embed = FakeEmbed()
     memories.save_facts(client, embed, [{"text": "to forget"}])

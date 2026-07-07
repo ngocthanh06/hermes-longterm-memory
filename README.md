@@ -217,8 +217,12 @@ container, no external assets, light/dark themed:
   confirmation showing the bundle's counts before anything is written
   (see "Moving to another machine" below).
 
-Deleting is deliberately NOT offered here — forget through Hermes
-(`forget_about`) or the REST API, which have confirmation guards.
+- **Corrections in the detail panel**: **Change type…** re-classifies a
+  memory (fact/preference/decision/task — the consolidation model doesn't
+  always get it right) and **Delete this memory** hard-deletes it, both
+  gated by a confirmation dialog. Deleting is permanent — unlike supersede,
+  it keeps no trace; forgetting through Hermes (`forget_about`) or the
+  REST API works the same way.
 
 ## Provider configuration (.env)
 
@@ -286,6 +290,8 @@ curl -X POST localhost:8800/memory/consolidate -H 'Content-Type: application/jso
 curl -X POST localhost:8800/memory/search -H 'Content-Type: application/json' \
   -d '{"query": "..."}'
 curl "localhost:8800/memory/facts?project=erp"      # list facts
+curl -X PATCH localhost:8800/memory/facts/<id>/type -H 'Content-Type: application/json' \
+  -d '{"type": "decision"}'                         # reclassify (fact/preference/decision/task)
 curl -X DELETE localhost:8800/memory/facts/<id>     # forget one fact
 curl -X DELETE "localhost:8800/memory/all?confirm=DELETE%20ALL"  # full reset
 

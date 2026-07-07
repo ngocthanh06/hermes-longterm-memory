@@ -206,6 +206,7 @@ between two image builds can silently diverge.
 | `GET /ui` | Memory browser — galaxy graph + list view, filters, semantic search, re-tagging |
 | `PATCH /memory/facts/{id}` | Move one fact to another project |
 | `PATCH /memory/facts` | Bulk move: `{ids: [...], project_id}` (multi-select in `/ui`) |
+| `PATCH /memory/facts/{id}/type` | Reclassify a fact's type (fact/preference/decision/task) — `/ui` correction for the consolidation model |
 | `PATCH /sessions/{id}/project` | Re-tag a whole session (turns + its facts; future turns follow) |
 | `PATCH /memory/projects/{slug}` | Rename a project across chat history, facts and documents |
 | `DELETE /sessions/{id}` | Delete an entire session |

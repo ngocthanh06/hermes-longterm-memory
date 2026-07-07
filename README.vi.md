@@ -215,8 +215,12 @@ container, không tải asset ngoài, có theme sáng/tối:
   thị số lượng bản ghi trong bundle trước khi ghi bất cứ thứ gì
   (xem mục "Chuyển sang máy khác" bên dưới).
 
-Trang này cố ý KHÔNG có chức năng xoá — hãy quên qua Hermes
-(`forget_about`) hoặc REST API, nơi có bước xác nhận.
+- **Sửa lỗi phân loại trong panel chi tiết**: **Change type…** đổi lại loại
+  của một memory (fact/preference/decision/task — model trưng cất không
+  phải lúc nào cũng phân loại đúng), và **Delete this memory** xoá vĩnh viễn
+  memory đó — cả hai đều có hộp xác nhận trước khi thực hiện. Xoá là vĩnh
+  viễn, không giữ lại dấu vết như supersede; quên qua Hermes (`forget_about`)
+  hoặc REST API cũng hoạt động tương tự.
 
 ## Chọn provider (.env)
 
@@ -284,6 +288,8 @@ curl -X POST localhost:8800/memory/consolidate -H 'Content-Type: application/jso
 curl -X POST localhost:8800/memory/search -H 'Content-Type: application/json' \
   -d '{"query": "..."}'
 curl "localhost:8800/memory/facts?project=erp"      # liệt kê facts
+curl -X PATCH localhost:8800/memory/facts/<id>/type -H 'Content-Type: application/json' \
+  -d '{"type": "decision"}'                         # đổi loại (fact/preference/decision/task)
 curl -X DELETE localhost:8800/memory/facts/<id>     # quên một fact
 curl -X DELETE "localhost:8800/memory/all?confirm=DELETE%20ALL"  # reset toàn bộ
 

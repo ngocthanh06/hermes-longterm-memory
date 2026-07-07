@@ -416,6 +416,24 @@ def memory_retag_fact(fact_id: str, payload: ProjectRetag):
     return {"status": "retagged", "id": fact_id, "project": slug}
 
 
+class TypeChange(BaseModel):
+    type: str
+
+
+@app.patch("/memory/facts/{fact_id}/type")
+def memory_retype_fact(fact_id: str, payload: TypeChange):
+    """Change a fact's type (fact/preference/decision/task) — /ui correction
+    for when the consolidation LLM's classification was wrong."""
+    ftype = payload.type.strip().lower()
+    if ftype not in memories.VALID_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"type must be one of {sorted(memories.VALID_TYPES)}"
+        )
+    if not memories.set_fact_type(state["qdrant_client"], fact_id, ftype):
+        raise HTTPException(status_code=404, detail="fact not found")
+    return {"status": "retyped", "id": fact_id, "type": ftype}
+
+
 @app.patch("/sessions/{session_id}/project")
 def session_retag(session_id: str, payload: ProjectRetag):
     """Move a whole session (its turns + the facts distilled from it) to

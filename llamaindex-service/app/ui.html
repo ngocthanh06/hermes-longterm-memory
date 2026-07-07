@@ -17,6 +17,7 @@
     --text-muted: #8a8984;
     --edge: #b9b8b2;
     --accent: #2a78d6;
+    --danger: #d03b3b;
     --shadow: 0 8px 30px rgba(0,0,0,.12);
     --s1: #2a78d6; --s2: #1baf7a; --s3: #eda100; --s4: #008300;
     --s5: #4a3aa7; --s6: #e34948; --s7: #e87ba4; --s8: #eb6834;
@@ -35,6 +36,7 @@
       --text-muted: #8a8984;
       --edge: #4a4a46;
       --accent: #3987e5;
+      --danger: #d03b3b;
       --shadow: 0 8px 30px rgba(0,0,0,.5);
       --s1: #3987e5; --s2: #199e70; --s3: #c98500; --s4: #008300;
       --s5: #9085e9; --s6: #e66767; --s7: #d55181; --s8: #d95926;
@@ -46,7 +48,7 @@
     --glow: rgba(42,120,214,.05);
     --surface-1: #fcfcfb; --surface-2: #f0efec; --surface-3: #e7e6e2;
     --border: #dcdbd6; --text-primary: #0b0b0b; --text-secondary: #52514e;
-    --text-muted: #8a8984; --edge: #b9b8b2; --accent: #2a78d6;
+    --text-muted: #8a8984; --edge: #b9b8b2; --accent: #2a78d6; --danger: #d03b3b;
     --shadow: 0 8px 30px rgba(0,0,0,.12);
     --s1: #2a78d6; --s2: #1baf7a; --s3: #eda100; --s4: #008300;
     --s5: #4a3aa7; --s6: #e34948; --s7: #e87ba4; --s8: #eb6834;
@@ -56,7 +58,7 @@
     --glow: rgba(57,135,229,.08);
     --surface-1: #1a1a19; --surface-2: #262624; --surface-3: #313130;
     --border: #3a3a37; --text-primary: #ffffff; --text-secondary: #c3c2b7;
-    --text-muted: #8a8984; --edge: #4a4a46; --accent: #3987e5;
+    --text-muted: #8a8984; --edge: #4a4a46; --accent: #3987e5; --danger: #d03b3b;
     --shadow: 0 8px 30px rgba(0,0,0,.5);
     --s1: #3987e5; --s2: #199e70; --s3: #c98500; --s4: #008300;
     --s5: #9085e9; --s6: #e66767; --s7: #d55181; --s8: #d95926;
@@ -289,6 +291,9 @@
   }
   #modalBtns { display: flex; justify-content: flex-end; gap: 8px; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  #modalBtns .btn.danger.primary { background: var(--danger); border-color: var(--danger); color: #fff; }
   #toast {
     position: fixed; bottom: 18px; right: 18px; max-width: 340px;
     background: var(--surface-2); border: 1px solid var(--border);
@@ -366,6 +371,8 @@
       <button class="btn" id="pRetagFact">Change project (this only)…</button>
       <button class="btn" id="pRetagGroup">Re-tag linked group…</button>
       <button class="btn" id="pRetagSession">Re-tag whole session…</button>
+      <button class="btn" id="pRetype">Change type…</button>
+      <button class="btn danger" id="pDelete">Delete this memory</button>
     </div>
     <h2>Related memories</h2>
     <div id="pRelated"></div>
@@ -1457,31 +1464,37 @@ function closeModal(result) {
   if (modalResolve) { const r = modalResolve; modalResolve = null; r(result); }
 }
 
-function openModal({ title, message, options, current, value, confirmLabel }) {
+let modalMode = "slug";  // "slug" (project picker/typer) | "type" (fixed list) | "confirm" (yes/no)
+
+function openModal({ title, message, options, current, value, confirmLabel, mode = "slug", danger = false }) {
+  modalMode = mode;
   return new Promise(res => {
     modalResolve = res;
+    $("modalOk").classList.toggle("danger", danger);
     $("modalTitle").textContent = title;
     $("modalMsg").textContent = message || "";
     const opts = $("modalOptions");
     opts.innerHTML = "";
     if (options && options.length) {
-      for (const slug of options) {
+      for (const opt of options) {
+        const label = mode === "type" ? `${TYPE_GLYPH[opt] || ""} ${opt}` : escapeHtml(opt);
         const row = document.createElement("label");
-        row.className = "opt" + (slug === current ? " current" : "");
+        row.className = "opt" + (opt === current ? " current" : "");
         row.innerHTML =
-          `<input type="radio" name="projOpt" value="${escapeHtml(slug)}"${slug === current ? " checked" : ""}>` +
-          `<span>${escapeHtml(slug)}</span>` +
-          (slug === current ? '<span style="color:var(--text-muted);font-size:11px">· current</span>' : "");
+          `<input type="radio" name="modalOpt" value="${escapeHtml(opt)}"${opt === current ? " checked" : ""}>` +
+          `<span>${label}</span>` +
+          (opt === current ? '<span style="color:var(--text-muted);font-size:11px">· current</span>' : "");
         opts.appendChild(row);
       }
       opts.style.display = "flex";
     } else opts.style.display = "none";
     const inp = $("modalInput");
+    inp.style.display = mode === "confirm" || mode === "type" ? "none" : "";
     inp.value = value || "";
     inp.placeholder = options ? "…or type a NEW project slug" : "project-slug";
     $("modalOk").textContent = confirmLabel || "Apply";
     $("modal").style.display = "block";
-    if (!options) inp.focus();
+    if (mode === "slug" && !options) inp.focus();
   });
 }
 
@@ -1493,6 +1506,13 @@ $("modalInput").addEventListener("keydown", e => { if (e.key === "Enter") $("mod
 $("modalCancel").onclick = () => closeModal(null);
 $("modal").onclick = e => { if (e.target === $("modal")) closeModal(null); };
 $("modalOk").onclick = () => {
+  if (modalMode === "confirm") { closeModal(true); return; }
+  if (modalMode === "type") {
+    const r = document.querySelector('#modalOptions input[type=radio]:checked');
+    if (!r) { toast("Pick a type."); return; }
+    closeModal(r.value);
+    return;
+  }
   let slug = $("modalInput").value.trim().toLowerCase();
   if (!slug) {
     const r = document.querySelector('#modalOptions input[type=radio]:checked');
@@ -1508,6 +1528,12 @@ function pickProject(title, message, current, confirmLabel) {
 }
 function inputSlug(title, message, value, confirmLabel) {
   return openModal({ title, message, options: null, value, confirmLabel });
+}
+function pickType(title, message, current) {
+  return openModal({ title, message, options: TYPES, current, mode: "type", confirmLabel: "Change type" });
+}
+function confirmDialog(title, message, confirmLabel, danger = false) {
+  return openModal({ title, message, mode: "confirm", confirmLabel, danger });
 }
 
 async function patchJSON(url, body) {
@@ -1559,6 +1585,28 @@ $("pRetagSession").onclick = async () => {
   if (!slug) return;
   const r = await patchJSON(`/sessions/${encodeURIComponent(selected.session_id)}/project`, { project_id: slug });
   if (r) { toast(`Moved ${r.turns} turn(s) + ${r.facts} fact(s) to "${slug}".`); select(null); await load(); }
+};
+
+$("pRetype").onclick = async () => {
+  if (!selected) return;
+  const t = await pickType("Change type", "The consolidation model doesn't always classify correctly — pick the right one.", selected.type);
+  if (!t || t === selected.type) return;
+  const r = await patchJSON(`/memory/facts/${encodeURIComponent(selected.id)}/type`, { type: t });
+  if (r) { toast(`Changed type to "${t}".`); select(null); await load(); }
+};
+
+$("pDelete").onclick = async () => {
+  if (!selected) return;
+  const preview = selected.text.length > 80 ? selected.text.slice(0, 80) + "…" : selected.text;
+  const ok = await confirmDialog("Delete this memory",
+    `"${preview}" will be permanently deleted — unlike supersede, this keeps no trace. This cannot be undone.`,
+    "Delete", true);
+  if (!ok) return;
+  const resp = await fetch(`/memory/facts/${encodeURIComponent(selected.id)}`, { method: "DELETE" });
+  if (!resp.ok) { toast("Delete failed: " + (await resp.text())); return; }
+  toast("Memory deleted.");
+  select(null);
+  await load();
 };
 
 async function renameProject(slug) {

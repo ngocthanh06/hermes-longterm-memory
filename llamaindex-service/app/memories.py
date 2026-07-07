@@ -266,6 +266,25 @@ def set_fact_project(client: QdrantClient, fact_id: str, project_id: str) -> boo
     return True
 
 
+def set_fact_type(client: QdrantClient, fact_id: str, ftype: str) -> bool:
+    """Change a fact's type (user correction from /ui — the consolidation
+    LLM's fact/preference/decision/task call isn't always right). False if
+    the id is unknown or ftype isn't one of VALID_TYPES."""
+    if ftype not in VALID_TYPES:
+        return False
+    existing = client.retrieve(
+        collection_name=config.MEMORIES_COLLECTION, ids=[fact_id], with_payload=False
+    )
+    if not existing:
+        return False
+    client.set_payload(
+        collection_name=config.MEMORIES_COLLECTION,
+        payload={"type": ftype},
+        points=[fact_id],
+    )
+    return True
+
+
 def set_facts_project(
     client: QdrantClient, fact_ids: list, project_id: str
 ) -> int:
