@@ -168,6 +168,12 @@ model (default 384 — `paraphrase-multilingual-MiniLM-L12-v2`).
 ### `hermes_documents` (L4)
 Managed by LlamaIndex's `QdrantVectorStore` (chunks + metadata `user_id`,
 `source`, `stored_path` → original file in `/data/documents/<sha12>_<name>`).
+`stored_path` is content-addressed (the sha lives in the filename) and
+payload-indexed, so `documents.already_ingested` can cheaply check "has this
+exact file already been indexed" — `/ingest/file` uses it to make re-sending
+an unchanged file a no-op instead of piling up duplicate chunks. This is what
+lets `scripts/ingest_watcher.py` poll each project's `docs/` folder (§9, §10)
+and re-run safely.
 
 ### `hermes_meta` (guard)
 A single fixed point, vector dim=1: `{schema_version, embed_provider,
@@ -317,6 +323,11 @@ the same service:
 - **Backup**: `./scripts/backup.sh` — snapshots every collection into
   `./backups/` (binary, same-machine restore only — see §12 for moving to
   another machine or embedding model).
+- **Docs auto-ingest**: `./scripts/ingest_watcher.py` — one poll pass per
+  invocation (launchd runs it every 60s), reads project folders from
+  `~/.hermes/projects.db` merged with the Hermes-independent fallback
+  catalog (§11), sends new/changed files under each project's `docs/`
+  subfolder to `/ingest/file`. Log: `logs/ingest_watcher.log`.
 - **Data**: named volumes `qdrant_data` (vectors) + `hermes_data` (original files).
   `docker compose down -v` = wipe everything and start over.
 - **Ports**: 8800 (service — keeps 8000 free for Hermes' hindsight server),
@@ -336,6 +347,7 @@ hermes-agent/
 │   ├── pre_llm_call.py          # Hermes: auto-inject recalled memory into every turn
 │   ├── on_session_end.py        # Hermes: trigger consolidation when a session finishes
 │   ├── on_session_start.py      # Hermes: debounced catch-up sweep when Desktop opens
+│   ├── project_catalog.py       # agent-agnostic project→folder fallback (§11) — no Hermes required
 │   └── claude/                  # Claude Code adapter — same lifecycle, 4 hooks
 │       ├── common.py            #   shared HTTP/project-resolution helpers
 │       ├── user_prompt_submit.py
@@ -346,6 +358,7 @@ hermes-agent/
 │   ├── configure_hermes.py      # auto-patch config.yaml + consent + serve bug + app restart
 │   ├── configure_claude.py      # auto-wire Claude Code (settings.json hooks + MCP registration)
 │   ├── backup.sh                # Qdrant snapshots (nightly via launchd)
+│   ├── ingest_watcher.py        # auto-ingest each project's docs/ folder (60s poll via launchd)
 │   └── memory_transfer.sh       # text-level export/import for device migration (§12)
 ├── logs/
 │   ├── hook-debug.jsonl         # raw payload of every Hermes hook run (diagnostics)
@@ -393,6 +406,16 @@ flowchart TD
     D -- yes --> P3["project_id = slugified folder name<br/>source = folder"]
     D -- no --> P4["project_id = default<br/>source = default"]
 ```
+
+**The P3 folder→slug mapping is also persisted**, not just resolved and
+discarded: `hooks/project_catalog.py` records it in
+`~/.hermes/discovered_projects.json` (best-effort, skipped if unchanged).
+Hermes' `projects.db` is only populated by the Hermes Desktop app itself, so
+without this a Claude-Code-only machine (no Hermes installed at all — see
+§7b/§8) would have no record of any project's folder anywhere on disk.
+`scripts/ingest_watcher.py` (§9) reads both sources merged (Hermes wins on a
+slug collision) — this is what lets the docs/ auto-ingest watcher work on a
+Claude-Code-only install with zero Hermes-specific setup.
 
 ```
 project_id rides along with /memory/append and is stored in the payload.

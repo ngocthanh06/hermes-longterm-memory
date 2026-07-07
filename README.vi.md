@@ -340,6 +340,32 @@ mới nhất; log tại `logs/backup.log`) — setup.sh đã cài. Chạy tay kh
 ./scripts/backup.sh    # snapshot mọi collection hermes_* vào ./backups/
 ```
 
+## Tự động ingest tài liệu (docs/ watcher)
+
+Cứ phải `curl` tay từng file vào knowledge base thì rất bất tiện. Thay vào đó,
+bỏ file vào **thư mục con `docs/` bên trong thư mục của project** —
+`scripts/ingest_watcher.py` sẽ tự động lấy:
+
+- Được `setup.sh`/`configure_hermes.py` cài như một launchd agent, quét 1 lần
+  mỗi 60 giây (`com.hermes.memory-ingest.plist.template`; không phải daemon
+  chạy liên tục, không cần thư viện `watchdog`/inotify — "quét" nghĩa là so
+  sánh (mtime, size) với lần chạy trước).
+- **Hoạt động dù có hay không có Hermes Desktop.** Danh sách thư mục project
+  lấy từ 2 nguồn gộp lại: `~/.hermes/projects.db` của Hermes (nếu có cài), và
+  `~/.hermes/discovered_projects.json` — 1 catalog dự phòng mà adapter Claude
+  Code tự ghi vào ngay lần đầu bạn chat trong 1 thư mục project
+  (`hooks/project_catalog.py`). Máy chỉ dùng Claude Code, hoàn toàn không cài
+  Hermes Desktop, vẫn tự phát hiện được mọi project theo cách này — không cần
+  cấu hình gì thêm.
+- **Opt-in theo từng project**: chỉ theo dõi khi `<thư mục project>/docs/`
+  tồn tại — tránh lỡ tay ingest nguyên một repo code.
+- Hỗ trợ: `.pdf .md .txt .docx`. File mới/đổi được gửi lên `/ingest/file` kèm
+  đúng `project_id`; file không đổi được bỏ qua ở cả 2 lớp — local (state file
+  tại `~/.hermes/ingest_watcher_state.json`) và server-side
+  (`documents.already_ingested` — lớp phòng hộ nếu state file bị mất, đảm bảo
+  chạy lại watcher không bao giờ tạo ra chunk trùng lặp).
+- Log: `logs/ingest_watcher.log`. Chạy tay 1 lần: `python3 scripts/ingest_watcher.py`.
+
 ## Chuyển sang máy khác (export / import)
 
 Snapshot hàng đêm là **dữ liệu nhị phân, gắn chặt với embedding model** —
@@ -374,11 +400,13 @@ hermes-agent/
 │   ├── pre_llm_call.py      # Hermes: tự tiêm memory vào mỗi lượt chat
 │   ├── on_session_end.py    # Hermes: trigger chưng cất khi phiên kết thúc
 │   ├── on_session_start.py  # Hermes: quét bù khi mở Desktop
+│   ├── project_catalog.py   # fallback project→folder không phụ thuộc agent (không cần Hermes)
 │   └── claude/              # adapter Claude Code (cùng vòng đời, 4 hooks)
 ├── scripts/
-│   ├── configure_hermes.py  # tự cấu hình Hermes (hooks + consent + vá serve + key + backup)
+│   ├── configure_hermes.py  # tự cấu hình Hermes (hooks + consent + vá serve + key + backup + ingest)
 │   ├── configure_claude.py  # tự cấu hình Claude Code (hooks settings.json + MCP)
 │   ├── backup.sh            # snapshot Qdrant (launchd gọi hàng đêm)
+│   ├── ingest_watcher.py    # tự ingest thư mục docs/ của mỗi project (launchd gọi mỗi 60s)
 │   └── memory_transfer.sh   # export/import mức văn bản để chuyển máy
 └── llamaindex-service/      # memory service (FastAPI + LlamaIndex + MCP)
     └── tests/               # bộ test pytest (chạy trong container, xem bên dưới)

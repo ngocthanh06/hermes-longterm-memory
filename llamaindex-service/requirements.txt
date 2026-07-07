@@ -5,6 +5,7 @@ pydantic==2.10.4
 
 llama-index-core==0.12.10
 llama-index-vector-stores-qdrant==0.4.2
+llama-index-readers-file>=0.4,<0.5   # SimpleDirectoryReader file-type readers (pdf/docx/txt/md)
 
 # Embedding providers (fastembed is the zero-config default).
 # fastembed is pinned EXACTLY: its pooling behaviour changed between minor

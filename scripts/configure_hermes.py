@@ -16,6 +16,7 @@ Run via setup.sh (or directly). Idempotent — safe to re-run. Steps:
                    API key from ~/.hermes/.env (NVIDIA first, then Gemini) so
                    auto-consolidation works out of the box.
 5. backup agent  — install the nightly Qdrant backup launchd job (macOS).
+5b. ingest agent — install the docs/ auto-ingest launchd job, 60s poll (macOS).
 6. restart       — quit Hermes Desktop (verify the backend died) and relaunch.
 
 Exit code 0 = fully wired; 1 = something needs attention (printed).
@@ -325,6 +326,31 @@ def install_backup_agent() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 5b. docs/ auto-ingest launchd agent (macOS) — L4 knowledge base
+# ---------------------------------------------------------------------------
+def install_ingest_watcher_agent() -> None:
+    print("==> docs/ auto-ingest (launchd, every 60s)")
+    if sys.platform != "darwin":
+        note("not macOS — set up a cron job for scripts/ingest_watcher.py yourself")
+        return
+    template = REPO / "scripts" / "com.hermes.memory-ingest.plist.template"
+    target = Path.home() / "Library" / "LaunchAgents" / "com.hermes.memory-ingest.plist"
+    rendered = template.read_text().replace("__REPO__", str(REPO)).replace("__PYTHON__", sys.executable)
+    if target.exists() and target.read_text() == rendered:
+        note("already installed")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered)
+    plistlib.loads(rendered.encode())  # validate
+    subprocess.run(["launchctl", "unload", str(target)], capture_output=True)
+    result = subprocess.run(["launchctl", "load", str(target)], capture_output=True, text=True)
+    if result.returncode == 0:
+        note(f"installed + loaded {target.name} (watches each project's docs/ subfolder)")
+    else:
+        fail(f"launchctl load failed: {result.stderr.strip()}")
+
+
+# ---------------------------------------------------------------------------
 # 6. restart Hermes Desktop
 # ---------------------------------------------------------------------------
 def restart_desktop() -> None:
@@ -360,6 +386,7 @@ def main() -> int:
     patch_soul()
     sync_llm_env()
     install_backup_agent()
+    install_ingest_watcher_agent()
     if "--no-restart" not in sys.argv:
         restart_desktop()
     print("Done" if ok_all else "Some items need manual attention (see ✗ above)")

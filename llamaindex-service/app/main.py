@@ -200,6 +200,11 @@ async def ingest_file(
 
     parsed_metadata.setdefault("source", file.filename)
     parsed_metadata["stored_path"] = str(stored)
+    if documents.already_ingested(state["qdrant_client"], str(stored)):
+        return IngestResponse(
+            status="skipped_duplicate",
+            total_chunks_indexed=documents.point_count(state["qdrant_client"]),
+        )
     total = documents.ingest_file(
         state["index"], state["qdrant_client"], stored, parsed_metadata,
         project_id=project_id,

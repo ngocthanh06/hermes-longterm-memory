@@ -32,6 +32,7 @@ DEBUG_LOG = os.path.join(
 # Reuse the Hermes sidebar-project resolver from the sibling hook package.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from post_llm_call import resolve_project_with_source  # noqa: E402
+from project_catalog import record_project_folder  # noqa: E402
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -97,5 +98,10 @@ def resolve_project(cwd: str) -> tuple:
         if root not in (os.path.expanduser("~"), os.sep):
             folder_slug = _slugify(os.path.basename(root))
             if folder_slug:
+                # Hermes doesn't know this folder (no Hermes install, or the
+                # folder isn't a sidebar project) — record it so host-side
+                # jobs with no cwd of their own (the docs/ ingest watcher)
+                # can still find it.
+                record_project_folder(folder_slug, root)
                 return folder_slug, "folder"
     return "default", "default"

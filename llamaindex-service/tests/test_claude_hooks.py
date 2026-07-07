@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 import post_llm_call
+import project_catalog
 from common import _slugify, resolve_project
 from stop import extract_last_turn
 
@@ -107,6 +108,7 @@ def hermes_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setattr(post_llm_call, "PROJECTS_DB", db)
+    monkeypatch.setattr(project_catalog, "CATALOG_FILE", tmp_path / "discovered_projects.json")
     return tmp_path
 
 
@@ -121,6 +123,17 @@ def test_resolve_ignores_hermes_active_project(hermes_db):
     other = hermes_db / "My Tool"
     other.mkdir()
     assert resolve_project(str(other)) == ("my-tool", "folder")
+    # Hermes doesn't know this folder — the fallback catalog must, so a
+    # Claude-Code-only (no Hermes Desktop) install can still be discovered
+    # by the docs/ ingest watcher.
+    catalog = json.loads(project_catalog.CATALOG_FILE.read_text())
+    assert catalog["my-tool"]["path"] == str(other)
+
+
+def test_resolve_hermes_anchored_folder_not_recorded_in_catalog(hermes_db):
+    # A folder Hermes already knows about doesn't need the fallback catalog.
+    resolve_project(str(hermes_db / "erp-workdir"))
+    assert not project_catalog.CATALOG_FILE.exists()
 
 
 def test_resolve_home_and_empty_are_default(hermes_db, monkeypatch):
@@ -138,3 +151,5 @@ def test_resolve_git_root_names_the_project(hermes_db):
     sub.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     assert resolve_project(str(sub)) == ("myrepo", "folder")
+    catalog = json.loads(project_catalog.CATALOG_FILE.read_text())
+    assert catalog["myrepo"]["path"] == str(repo)

@@ -117,7 +117,7 @@ def ensure_all(client: QdrantClient, embed_dim: int) -> None:
             )
         _ensure_indexes(
             client, config.DOCUMENTS_COLLECTION,
-            {"project_id": keyword, "user_id": keyword},
+            {"project_id": keyword, "user_id": keyword, "stored_path": keyword},
         )
 
     if config.META_COLLECTION not in _existing_collections(client):

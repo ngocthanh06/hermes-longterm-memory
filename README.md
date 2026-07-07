@@ -342,6 +342,32 @@ log at `logs/backup.log`) — installed by setup.sh. Manual run:
 ./scripts/backup.sh    # snapshots every hermes_* collection into ./backups/
 ```
 
+## Auto-ingest documents (docs/ watcher)
+
+Manually `curl`-ing every file into the knowledge base gets old fast. Instead,
+drop files into a **`docs/` subfolder inside a project's own folder** —
+`scripts/ingest_watcher.py` picks them up automatically:
+
+- Installed by `setup.sh`/`configure_hermes.py` as a launchd agent, one poll
+  pass every 60s (`com.hermes.memory-ingest.plist.template`; not a long-lived
+  daemon, no `watchdog`/inotify dependency — "poll" means comparing
+  (mtime, size) against the last run).
+- **Works with or without Hermes Desktop.** Project folders come from two
+  merged sources: Hermes' `~/.hermes/projects.db` when it's installed, and
+  `~/.hermes/discovered_projects.json` — a fallback catalog the Claude Code
+  adapter fills in on its own the first time you chat inside a project folder
+  (`hooks/project_catalog.py`). A Claude-Code-only machine with no Hermes
+  Desktop at all still gets every project discovered this way; nothing to
+  configure.
+- **Opt-in per project**: a project is only watched if `<project folder>/docs/`
+  exists — a code repo is never ingested wholesale by accident.
+- Supported: `.pdf .md .txt .docx`. New/changed files are sent to
+  `/ingest/file` tagged with that project's `project_id`; unchanged files are
+  skipped both locally (a state file at `~/.hermes/ingest_watcher_state.json`)
+  and server-side (`documents.already_ingested` — a safety net if that state
+  file is ever lost, so re-running the watcher never piles up duplicate chunks).
+- Log: `logs/ingest_watcher.log`. Manual single pass: `python3 scripts/ingest_watcher.py`.
+
 ## Moving to another machine (export / import)
 
 Nightly snapshots are **binary and tied to the embedding model** — they
@@ -376,11 +402,13 @@ hermes-agent/
 │   ├── pre_llm_call.py      # Hermes: auto-inject memory into every turn
 │   ├── on_session_end.py    # Hermes: trigger consolidation when a session ends
 │   ├── on_session_start.py  # Hermes: catch-up sweep when Desktop opens
+│   ├── project_catalog.py   # agent-agnostic project→folder fallback (no Hermes needed)
 │   └── claude/              # Claude Code adapter (same lifecycle, 4 hooks)
 ├── scripts/
-│   ├── configure_hermes.py  # auto-wire Hermes (hooks + consent + serve patch + key + backup)
+│   ├── configure_hermes.py  # auto-wire Hermes (hooks + consent + serve patch + key + backup + ingest)
 │   ├── configure_claude.py  # auto-wire Claude Code (settings.json hooks + MCP)
 │   ├── backup.sh            # Qdrant snapshots (called nightly by launchd)
+│   ├── ingest_watcher.py    # auto-ingest each project's docs/ folder (called every 60s by launchd)
 │   └── memory_transfer.sh   # text-level export/import for device migration
 └── llamaindex-service/      # memory service (FastAPI + LlamaIndex + MCP)
     └── tests/               # pytest suite (runs in the container, see below)

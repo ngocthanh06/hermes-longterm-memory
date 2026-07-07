@@ -5,6 +5,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "llamaindex-service"))  # the `app` package
 sys.path.insert(0, str(REPO_ROOT / "hooks"))  # hook scripts (stdlib-only)
 sys.path.insert(0, str(REPO_ROOT / "hooks" / "claude"))  # Claude Code adapter hooks
+sys.path.insert(0, str(REPO_ROOT / "scripts"))  # host-side scripts (stdlib-only)
 
 
 class FakeEmbed:

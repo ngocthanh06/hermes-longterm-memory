@@ -10,13 +10,37 @@ from pathlib import Path
 
 from llama_index.core import Document, SimpleDirectoryReader, VectorStoreIndex
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
 
 from app import config
 
 
-def _collection_point_count(qdrant_client: QdrantClient) -> int:
+def point_count(qdrant_client: QdrantClient) -> int:
     info = qdrant_client.get_collection(config.DOCUMENTS_COLLECTION)
     return info.points_count
+
+
+def already_ingested(qdrant_client: QdrantClient, stored_path: str) -> bool:
+    """True if a chunk from this exact stored_path (content-addressed by
+    store_original, so identical file content -> identical path) is already
+    in the index. LlamaIndex flattens metadata onto the top-level payload
+    (alongside the serialized `_node_content` it uses to reconstruct nodes),
+    so `stored_path` is a plain, indexed field — a cheap filtered lookup.
+    Used to make re-running the docs/ watcher a no-op on unchanged files
+    instead of piling up duplicate chunks."""
+    try:
+        points, _ = qdrant_client.scroll(
+            collection_name=config.DOCUMENTS_COLLECTION,
+            scroll_filter=qmodels.Filter(
+                must=[qmodels.FieldCondition(key="stored_path", match=qmodels.MatchValue(value=stored_path))]
+            ),
+            limit=1,
+            with_payload=False,
+            with_vectors=False,
+        )
+        return bool(points)
+    except Exception:
+        return False  # collection doesn't exist yet -> nothing ingested
 
 
 def store_original(source_path: Path, filename: str) -> Path:
@@ -47,7 +71,7 @@ def ingest_text(
         },
     )
     index.insert(document)
-    return _collection_point_count(qdrant_client)
+    return point_count(qdrant_client)
 
 
 def ingest_file(
@@ -67,4 +91,4 @@ def ingest_file(
             }
         )
         index.insert(document)
-    return _collection_point_count(qdrant_client)
+    return point_count(qdrant_client)

@@ -13,8 +13,33 @@
 >   from ~/.hermes/.env.
 > - ✅ **Phase B complete** — launchd backup at 2:00 AM, 7-copy retention,
 >   log at logs/backup.log (BSD head fixed with awk).
-> - ⬜ Phase C (bge-m3 + hybrid) — not done, needs benchmarking first.
-> - ⬜ Phase D (auto-ingest docs/) — not done.
+> - ⬜ **Phase C — benchmarked, inconclusive, NOT migrating (2026-07-07).**
+>   `BAAI/bge-m3` (the model this section originally proposed) turned out to
+>   not exist in fastembed at all (checked 0.7.4 and 0.8.0) — substituted
+>   `intfloat/multilingual-e5-large`, the strongest multilingual model
+>   fastembed does support. `scripts/benchmark_embeddings.py` ran a blind
+>   LLM-judged comparison on 15 real Vietnamese chat queries against the
+>   real `hermes_memories` corpus: candidate won 6, current (MiniLM) won 4,
+>   5 ties. Too thin a margin on too small a sample to justify a full
+>   re-embed migration — staying on MiniLM. Re-run with a larger sample
+>   (more queries, corpus including L4 documents too) if this comes up again.
+> - ✅ **Phase D complete (2026-07-07)** — `scripts/ingest_watcher.py` (stdlib-only,
+>   polls each project's `docs/` subfolder from `~/.hermes/projects.db`, one
+>   pass per invocation) + `com.hermes.memory-ingest.plist.template` (launchd,
+>   `StartInterval=60`, installed by `configure_hermes.py`). Along the way,
+>   fixed a pre-existing bug: `/ingest/file` 500'd on every call because
+>   `llama-index-readers-file` was missing from requirements.txt despite
+>   `pypdf` being pinned for it — added. Also added a real dedup guard
+>   (`documents.already_ingested`, filtered on the `stored_path` payload
+>   field) since `/ingest/file` had none — re-ingesting an unchanged file
+>   used to silently pile up duplicate chunks. Verified end-to-end on real
+>   data (42 real project doc files → 300 chunks, second pass 0 sent/42
+>   unchanged). **Follow-up same day**: the original design only read
+>   `~/.hermes/projects.db`, so a Claude-Code-only machine (no Hermes
+>   Desktop installed) had no project folders to watch at all — added
+>   `hooks/project_catalog.py`, an agent-agnostic fallback the Claude Code
+>   adapter fills in on its own (no Hermes required); the watcher now merges
+>   both sources. Verified with a from-scratch simulated no-Hermes machine.
 
 ## Foundational findings (verified in the Hermes source)
 
@@ -156,7 +181,7 @@ questions — half a session, avoids a pointless migration).
 
 ---
 
-## Phase D — Auto-ingest documents per project (#6)
+## Phase D — Auto-ingest documents per project (#6) ✅ done (2026-07-07)
 
 **Problem:** getting documents into the knowledge base requires manual curl.
 
@@ -188,7 +213,7 @@ convention. ~1 session. Decision to settle first: which folder gets watched
 | A3 | Memory management (list/forget) | 2-3 hours | — |
 | B1 | Automatic backup (launchd) | 30 minutes | — |
 | C1-3 | bge-m3 + hybrid + migration | 1-2 sessions | benchmark before migrating |
-| D | Auto-ingest watcher | 1 session | settle the docs/ folder convention |
+| D | Auto-ingest watcher | ✅ done | settle the docs/ folder convention |
 
 **Questions to settle before coding:**
 1. A1: which LLM for consolidation? (proposal: `anthropic` + Haiku if a key is
