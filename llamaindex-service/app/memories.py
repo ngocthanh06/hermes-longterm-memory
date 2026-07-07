@@ -10,6 +10,7 @@ provenance but are excluded from recall.
 
 import hashlib
 import math
+import re
 import time
 import uuid
 
@@ -21,6 +22,25 @@ from app import config, memory_store
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 VALID_TYPES = {"fact", "preference", "decision", "task"}
+
+# Shared fact-hygiene filter, applied at every entry point (consolidation's
+# LLM extraction, direct REST /memory/facts, direct MCP save_memories):
+# the prompt already tells the extracting LLM not to save meta-commentary
+# about the assistant/tool itself, but it slips through often enough
+# (observed in production: a mid-session model switch saved as a
+# "decision") to warrant a code-level net. Deliberately narrow —
+# multi-word/contextual phrases, not single generic words — to keep false
+# positives on unrelated legitimate facts rare.
+_META_ABOUT_ASSISTANT_RE = re.compile(
+    r"model mặc định|default model|mô hình mặc định|"
+    r"claude code|hermes desktop|ai assistant|trợ lý ai|"
+    r"phiên bản (của )?(claude|model|ai)|context window|system prompt",
+    re.IGNORECASE,
+)
+
+
+def is_meta_about_assistant(text: str) -> bool:
+    return bool(_META_ABOUT_ASSISTANT_RE.search(text))
 
 
 def fact_point_id(user_id: str, text: str) -> str:
@@ -38,6 +58,24 @@ def _active_filter(user_id: str, extra: list | None = None) -> qmodels.Filter:
     return qmodels.Filter(must=must)
 
 
+_DEDUP_PROMPT = """Are Fact A and Fact B stating the same underlying fact \
+about the user or their project — one possibly a rewording, translation, \
+summary, or more detailed version of the other?
+
+Fact A: {a}
+Fact B: {b}
+
+Answer with exactly one word: yes or no."""
+
+
+def _llm_confirms_duplicate(llm, new_text: str, existing_text: str) -> bool:
+    try:
+        answer = llm.complete(_DEDUP_PROMPT.format(a=new_text, b=existing_text)).text
+    except Exception:
+        return False  # best-effort — a flaky LLM call must not block saving
+    return answer.strip().lower().startswith("yes")
+
+
 def save_facts(
     client: QdrantClient,
     embed_model,
@@ -46,11 +84,22 @@ def save_facts(
     session_id: str = "",
     project_id: str = config.DEFAULT_PROJECT,
     source_agent: str = "",
+    llm=None,
 ) -> list[dict]:
+    # A direct save (no session behind it — e.g. an agent calling save_memories
+    # on its own initiative, not through consolidate_session) must still get a
+    # session_id: without one, these facts can't be grouped in /ui (the "same
+    # session" ring, "re-tag whole session") and provenance is lost. One
+    # synthetic id per CALL, shared by every fact in this batch.
+    if not session_id:
+        session_id = f"direct:{uuid.uuid4().hex[:12]}"
     results = []
     for fact in facts:
         text = (fact.get("text") or "").strip()
         if not text:
+            continue
+        if is_meta_about_assistant(text):
+            results.append({"text": text, "status": "rejected_meta"})
             continue
         ftype = fact.get("type", "fact")
         if ftype not in VALID_TYPES:
@@ -68,16 +117,25 @@ def save_facts(
         vector = embed_model.get_text_embedding(text)
 
         # A near-identical active fact gets superseded (updated info wins).
+        # Two bands: >=SUPERSEDE_SIMILARITY is close enough to auto-supersede
+        # (near-exact text); the wider DEDUP_LLM_CHECK_MIN..SUPERSEDE_SIMILARITY
+        # band catches reworded/summarized restatements that score too low on
+        # raw cosine to trust blindly (see config.py) — an LLM judges those,
+        # and only when one is configured (LLM_PROVIDER=none skips the band).
         superseded = []
         hits = client.search(
             collection_name=config.MEMORIES_COLLECTION,
             query_vector=vector,
             query_filter=_active_filter(user_id),
-            limit=3,
+            limit=5,
+            score_threshold=config.DEDUP_LLM_CHECK_MIN,
             with_payload=["text"],
         )
         for hit in hits:
-            if hit.score >= config.SUPERSEDE_SIMILARITY:
+            is_dup = hit.score >= config.SUPERSEDE_SIMILARITY or (
+                llm is not None and _llm_confirms_duplicate(llm, text, hit.payload.get("text", ""))
+            )
+            if is_dup:
                 client.set_payload(
                     collection_name=config.MEMORIES_COLLECTION,
                     payload={"superseded_by": point_id},

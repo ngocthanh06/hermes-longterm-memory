@@ -229,6 +229,7 @@
   }
   #list td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   #list tr:hover td { background: var(--surface-2); cursor: pointer; }
+  #list tr.list-selected td { background: var(--glow); box-shadow: inset 2px 0 0 var(--accent); }
   #list .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
   footer {
     display: flex; gap: 16px; padding: 6px 16px; border-top: 1px solid var(--border);
@@ -365,7 +366,6 @@
       <button class="btn" id="pRetagFact">Change project (this only)…</button>
       <button class="btn" id="pRetagGroup">Re-tag linked group…</button>
       <button class="btn" id="pRetagSession">Re-tag whole session…</button>
-      <button class="btn" id="pSelectGroup">Select linked group</button>
     </div>
     <h2>Related memories</h2>
     <div id="pRelated"></div>
@@ -1322,9 +1322,10 @@ function select(n, withRipple = true) {
   $("pRetagSession").style.display = n.session_id ? "" : "none";
 
   // Scope counts on the re-tag buttons, so "everything vs just this one" is
-  // an informed choice: group = connected cluster through displayed links,
-  // session = every memory distilled from the same source session.
-  const group = connectedSet([n.id]);
+  // an informed choice: group = same-project cluster up to 2 links away
+  // (bounded — see connectedSet), session = every memory distilled from
+  // the same source session.
+  const group = connectedSet([n.id], { sameProjectOnly: true, maxDepth: 2 });
   const siblings = nodes.filter(x =>
     x.id !== n.id && n.session_id && x.session_id === n.session_id);
   $("pRetagGroup").style.display = group.size > 1 ? "" : "none";
@@ -1377,6 +1378,10 @@ function updateBulkbar() {
     el.style.display = "flex";
     $("bulkCount").textContent = multiSel.size + " selected";
   } else el.style.display = "none";
+  // Keep the list view's row highlighting in sync too, wherever multiSel
+  // changed from (canvas shift+click, list shift+click, Clear, Escape) —
+  // centralized here instead of re-rendering the list at every call site.
+  if ($("list").style.display !== "none") renderList();
   invalidate();
 }
 
@@ -1385,24 +1390,38 @@ function toggleMulti(n) {
   updateBulkbar();
 }
 
-function connectedSet(seedIds) {
-  // BFS through the DISPLAYED similarity edges, visible nodes only — the
-  // cluster a user sees is exactly the cluster that moves together.
-  const queue = [...seedIds];
+function connectedSet(seedIds, { sameProjectOnly = false, maxDepth = Infinity } = {}) {
+  // BFS through the DISPLAYED similarity edges, visible nodes only — capped
+  // in depth (and optionally to one project). An earlier unbounded version
+  // of this walked the WHOLE chain of edges, including the cross-project
+  // "bridge" edges rendered on screen — a single click could transitively
+  // sweep in nearly every memory in the store (observed: 122 of 122), far
+  // outside what "linked group" means to someone looking at one node's
+  // immediate neighborhood.
+  const seedProject = sameProjectOnly ? nodeById.get([...seedIds][0])?.project_id : null;
   const seen = new Set(seedIds);
-  while (queue.length) {
-    const id = queue.pop();
-    for (const nb of (adj.get(id) || [])) {
-      if (seen.has(nb)) continue;
-      const node = nodeById.get(nb);
-      if (node && visible(node)) { seen.add(nb); queue.push(nb); }
+  let frontier = [...seedIds], depth = 0;
+  while (frontier.length && depth < maxDepth) {
+    const next = [];
+    for (const id of frontier) {
+      for (const nb of (adj.get(id) || [])) {
+        if (seen.has(nb)) continue;
+        const node = nodeById.get(nb);
+        if (!node || !visible(node)) continue;
+        if (sameProjectOnly && node.project_id !== seedProject) continue;
+        seen.add(nb); next.push(nb);
+      }
     }
+    frontier = next; depth++;
   }
   return seen;
 }
 
 function expandLinked() {
-  multiSel = connectedSet(multiSel);
+  // Grows the manual selection by up to 2 hops per click (not unbounded) —
+  // click it again to keep expanding a step at a time, deliberately, rather
+  // than one click sweeping in everything transitively reachable.
+  multiSel = connectedSet(multiSel, { maxDepth: 2 });
   updateBulkbar();
 }
 
@@ -1420,13 +1439,6 @@ $("bulkRetag").onclick = async () => {
     await load();
   }
 };
-$("pSelectGroup").onclick = () => {
-  if (!selected) return;
-  multiSel = new Set([selected.id]);
-  expandLinked();
-  select(null, false);  // close the panel so the dashed rings are visible
-};
-
 // ------------------------------------------------------- re-tag corrections
 // Custom modal replaces prompt()/confirm(): pick an existing project from a
 // list (with its color) or type a new slug — no more blind manual typing.
@@ -1519,9 +1531,19 @@ $("pRetagFact").onclick = async () => {
 
 $("pRetagGroup").onclick = async () => {
   if (!selected) return;
-  const ids = [...connectedSet([selected.id])];
+  const ids = [...connectedSet([selected.id], { sameProjectOnly: true, maxDepth: 2 })];
+  // A bare count wasn't enough warning (a 122-of-122 sweep still looked like
+  // "just a small group" until applied) — show what's actually in it.
+  const others = ids.filter(id => id !== selected.id);
+  const sample = others.slice(0, 3).map(id => {
+    const t = nodeById.get(id)?.text || "";
+    return `"${t.length > 50 ? t.slice(0, 50) + "…" : t}"`;
+  });
+  const preview = sample.length
+    ? " Includes: " + sample.join(", ") + (others.length > sample.length ? `, +${others.length - sample.length} more.` : ".")
+    : "";
   const slug = await pickProject("Re-tag linked group",
-    `${ids.length} memories connected through the displayed similarity links move together. Their sessions and everything else stay put.`,
+    `${ids.length} memories in the same project, up to 2 links away, move together.${preview} Their sessions and everything else stay put.`,
     selected.project_id, "Move group");
   if (!slug) return;
   const r = await patchJSON("/memory/facts", { ids, project_id: slug });
@@ -1728,17 +1750,29 @@ $("bundleFile").onchange = async e => {
 function renderList() {
   const rows = [...visNodes]
     .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
-    .map(n => `<tr data-id="${n.id}" class="${n.superseded ? "ghosted" : ""}">
+    .map(n => {
+      const cls = [n.superseded ? "ghosted" : "", multiSel.has(n.id) ? "list-selected" : ""]
+        .filter(Boolean).join(" ");
+      return `<tr data-id="${n.id}" class="${cls}">
       <td>${escapeHtml(n.project_id)}</td>
       <td>${escapeHtml(n.text)}</td>
       <td><span class="badge"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:${colorOf(n)};display:inline-block;margin-right:4px"></span>${TYPE_GLYPH[n.type] || ""} ${n.type}</span></td>
       <td>${n.importance}</td>
-      <td>${fmtDateTime(n.created_at)}</td></tr>`).join("");
+      <td>${fmtDateTime(n.created_at)}</td></tr>`;
+    }).join("");
   $("list").innerHTML = `<table>
     <thead><tr><th>Project</th><th>Memory</th><th>Type</th><th>Imp.</th><th>Created</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   $("list").querySelectorAll("tr[data-id]").forEach(tr => {
-    tr.onclick = () => { select(nodes.find(n => n.id === tr.dataset.id)); };
+    // Same convention as the graph: plain click opens details, shift+click
+    // adds/removes it from the bulk selection — precise row targets make
+    // this a much easier way to multi-select than tiny canvas nodes.
+    tr.onclick = e => {
+      const n = nodes.find(x => x.id === tr.dataset.id);
+      if (!n) return;
+      if (e.shiftKey) { toggleMulti(n); }  // updateBulkbar() re-renders the list
+      else select(n);
+    };
   });
 }
 $("fitBtn").onclick = () => fitView();

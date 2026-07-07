@@ -37,6 +37,58 @@ The memory lifecycle is **fully automatic**: record → auto-recall →
 consolidate → controlled forgetting (`forget_about` tool) → nightly backup
 (2:00 AM, 7 kept).
 
+## Why use this instead of the alternatives?
+
+An honest comparison — strengths and trade-offs both — so you can judge
+whether it fits how you work.
+
+**Strengths:**
+
+- **Real memory, not a workaround.** A plain chat forgets everything the
+  moment you close the window. A hand-maintained `CLAUDE.md` needs you to
+  remember to update it, and never "forgets" stale information on its own.
+  Here, recording, distilling, and recalling old information all happen
+  automatically — you just chat normally.
+- **Shared across multiple AI agents, not locked to one.** Hermes Desktop
+  and Claude Code both run against the same memory in parallel: teach
+  something in one, the other already knows it — no re-explaining every
+  time you switch tools.
+- **Doesn't have to cost extra money.** Runs entirely on a subscription
+  you already pay for (Claude Code) or on a model running locally on your
+  machine (Ollama) — a paid API key is never required.
+- **Gets lighter over time, not heavier.** A static `CLAUDE.md` grows with
+  every note you add, and that whole file gets loaded on **every** chat
+  turn whether it's relevant or not — the cost per turn climbs over time.
+  Here, only what's actually relevant to the current question gets pulled
+  in, capped at a fixed size — no matter how much memory accumulates, the
+  cost per turn stays roughly constant.
+- **Fully private, fully yours.** Runs on your machine, nothing syncs
+  anywhere, nightly backups, complete control.
+- **The memory is visible, not a black box.** The `/ui` page shows
+  everything the system currently "remembers" about you as an interactive
+  graph — wrong entries get corrected, stale ones get deleted, instead of
+  guessing what the AI thinks it knows.
+- **Cleans up after itself.** Duplicate/reworded restatements and
+  outdated information (superseded by something newer) get detected
+  automatically — not an ever-growing, disorganized pile of notes after a
+  few months of use.
+- **Moving machines doesn't mean losing data.** A built-in export/import
+  bundle carries the whole memory across — a new machine, or even a
+  different embedding model, and nothing is lost.
+
+**Worth considering:**
+
+- Needs Docker and runs 1-2 background containers — a bit more RAM/CPU
+  than running nothing at all.
+- There's an initial setup step (`./setup.sh`) — mostly automated, but
+  still one more install step beyond the agent itself.
+- The quality of what gets "remembered" depends on the model doing the
+  distillation — a weaker model (e.g. Ollama on modest hardware) extracts
+  facts less reliably than a stronger one.
+- This is **personal, single-machine** data by design — it does not sync
+  across machines or share between users (a deliberate design choice, see
+  [ARCHITECTURE.md](ARCHITECTURE.md), not a temporary technical limit).
+
 ## Install (3 steps)
 
 1. Install [Docker Desktop](https://docs.docker.com/get-docker/).

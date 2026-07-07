@@ -16,3 +16,22 @@ class FakeEmbed:
 
     def get_text_embedding(self, text: str) -> list[float]:
         return self.table.get(text, [1.0, 0.0])
+
+
+class FakeCompletion:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeLLM:
+    """A canned-reply LLM stub — `reply` can be a fixed string or a callable
+    (prompt) -> str for tests that need different answers per call."""
+
+    def __init__(self, reply="yes"):
+        self.reply = reply
+        self.calls: list[str] = []
+
+    def complete(self, prompt):
+        self.calls.append(prompt)
+        reply = self.reply(prompt) if callable(self.reply) else self.reply
+        return FakeCompletion(reply)

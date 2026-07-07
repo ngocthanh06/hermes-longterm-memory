@@ -288,6 +288,7 @@ def memory_save_facts(payload: SaveFactsRequest):
         state["qdrant_client"], state["embed_model"],
         [f.model_dump() for f in payload.facts],
         session_id=payload.session_id, project_id=project_id,
+        llm=state.get("llm"),
     )
     return {"status": "ok", "project": project_id, "results": results}
 

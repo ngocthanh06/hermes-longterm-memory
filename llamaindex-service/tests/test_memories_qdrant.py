@@ -7,7 +7,7 @@ import pytest
 from qdrant_client import QdrantClient
 
 from app import config, memories, memory_store, qdrant_setup
-from tests.conftest import FakeEmbed
+from tests.conftest import FakeEmbed, FakeLLM
 
 DIM = 2
 
@@ -62,6 +62,83 @@ def test_save_facts_distinct_fact_not_superseded(client):
     memories.save_facts(client, embed, [{"text": "User likes Qdrant"}])
     r = memories.save_facts(client, embed, [{"text": "Deadline is Friday"}])
     assert r[0]["status"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# save_facts: LLM-checked dedup band (paraphrases too far apart for raw
+# cosine to trust, but not so far they're clearly distinct — see config.py)
+# ---------------------------------------------------------------------------
+def test_save_facts_llm_confirms_paraphrase_in_dedup_band(client):
+    embed = FakeEmbed({
+        "User likes Qdrant": _unit(0),
+        "User is quite fond of Qdrant indeed": _unit(41),  # cos(41°)≈0.75: in-band
+    })
+    memories.save_facts(client, embed, [{"text": "User likes Qdrant"}])
+    llm = FakeLLM("yes")
+    r = memories.save_facts(
+        client, embed, [{"text": "User is quite fond of Qdrant indeed"}], llm=llm
+    )
+    assert r[0]["status"] == "supersedes"
+    assert len(llm.calls) == 1
+
+
+def test_save_facts_llm_rejects_stays_distinct(client):
+    embed = FakeEmbed({
+        "User likes Qdrant": _unit(0),
+        "Something loosely related to Qdrant": _unit(41),
+    })
+    memories.save_facts(client, embed, [{"text": "User likes Qdrant"}])
+    llm = FakeLLM("no")
+    r = memories.save_facts(
+        client, embed, [{"text": "Something loosely related to Qdrant"}], llm=llm
+    )
+    assert r[0]["status"] == "new"
+
+
+def test_save_facts_without_llm_skips_dedup_band(client):
+    # Backward compatible: no llm configured (LLM_PROVIDER=none) → the
+    # in-band candidate is left alone, only the >=0.92 threshold still fires.
+    embed = FakeEmbed({
+        "User likes Qdrant": _unit(0),
+        "User is quite fond of Qdrant indeed": _unit(41),
+    })
+    memories.save_facts(client, embed, [{"text": "User likes Qdrant"}])
+    r = memories.save_facts(client, embed, [{"text": "User is quite fond of Qdrant indeed"}])
+    assert r[0]["status"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# save_facts: meta-about-the-assistant filter (belt and braces on the
+# consolidation prompt's own exclusion rule)
+# ---------------------------------------------------------------------------
+def test_save_facts_rejects_meta_about_assistant(client):
+    embed = FakeEmbed()
+    r = memories.save_facts(
+        client, embed,
+        [{"text": "User set Sonnet as the default model in Claude Code for new sessions."}],
+    )
+    assert r[0]["status"] == "rejected_meta"
+    assert memories.list_facts(client) == []
+
+
+# ---------------------------------------------------------------------------
+# save_facts: a missing session_id gets a synthetic one so facts from one
+# direct save_memories call still group together (provenance for /ui)
+# ---------------------------------------------------------------------------
+def test_save_facts_synthesizes_session_id_when_missing(client):
+    embed = FakeEmbed({"fact one": _unit(0), "fact two": _unit(90)})
+    memories.save_facts(client, embed, [{"text": "fact one"}, {"text": "fact two"}])
+    points, _ = client.scroll(collection_name=config.MEMORIES_COLLECTION, limit=10, with_payload=True)
+    sids = {p.payload["session_id"] for p in points}
+    assert len(sids) == 1  # both facts share ONE synthetic session
+    assert next(iter(sids)).startswith("direct:")
+
+
+def test_save_facts_keeps_explicit_session_id(client):
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "from a real session"}], session_id="s99")
+    points, _ = client.scroll(collection_name=config.MEMORIES_COLLECTION, limit=10, with_payload=True)
+    assert points[0].payload["session_id"] == "s99"
 
 
 def test_save_facts_skips_empty_text_and_clamps(client):

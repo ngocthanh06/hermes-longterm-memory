@@ -77,6 +77,7 @@ def _register_tools() -> None:
             client, state["embed_model"],
             [f.model_dump() for f in facts],
             session_id=session_id, project_id=project_id,
+            llm=state.get("llm"),
         )
         # Close the consolidation loop: turns handed out by consolidate_session
         # only count as consolidated once the extraction actually came back.

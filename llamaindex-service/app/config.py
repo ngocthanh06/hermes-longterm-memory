@@ -74,8 +74,16 @@ RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.25"))
 # Half-lives (days) for the recency decay applied on top of similarity.
 MEMORY_HALF_LIFE_DAYS = float(os.getenv("MEMORY_HALF_LIFE_DAYS", "90"))
 HISTORY_HALF_LIFE_DAYS = float(os.getenv("HISTORY_HALF_LIFE_DAYS", "30"))
-# Similarity above which a new fact supersedes an existing one.
+# Similarity above which a new fact supersedes an existing one — auto,
+# no LLM check needed (near-exact text).
 SUPERSEDE_SIMILARITY = float(os.getenv("SUPERSEDE_SIMILARITY", "0.92"))
+# Below SUPERSEDE_SIMILARITY but above this, a candidate is "maybe the same
+# fact reworded" — measured empirically: real paraphrase/summary pairs found
+# in production data scored 0.69-0.73 cosine on this embedding model, well
+# under 0.92, so a pure threshold change can't catch them without also
+# merging unrelated same-topic facts. Only checked when an LLM is configured
+# (LLM_PROVIDER=none skips this band and falls back to threshold-only).
+DEDUP_LLM_CHECK_MIN = float(os.getenv("DEDUP_LLM_CHECK_MIN", "0.60"))
 # Recall multiplier for hits belonging to the active project. Soft boost, not
 # a hard filter — cross-project knowledge can still surface when it's the
 # best match; same-project memories just win ties comfortably.
