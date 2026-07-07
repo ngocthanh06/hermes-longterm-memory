@@ -1,4 +1,4 @@
-# Hermes Agent — Long Brain Architecture
+# Longbrain Architecture
 
 Detailed technical documentation. For quick install/usage instructions see [README.md](README.md).
 

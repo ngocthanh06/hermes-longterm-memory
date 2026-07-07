@@ -1,13 +1,16 @@
-# Hermes Agent — Long-term Memory Stack (LlamaIndex + Qdrant)
+# Longbrain — Shared Long-term Memory for AI Agents (LlamaIndex + Qdrant)
 
 > 🇻🇳 Bản tiếng Việt: [README.vi.md](README.vi.md)
 
-A Docker-packaged "long brain" for AI agents: each user runs their own
-independent stack — all data and memory stay private on their machine. By
-default it needs **no API key, no Ollama, and no Python on the host**.
-Two agent adapters ship today — **Hermes Desktop** and **Claude Code** —
-and they can run **in parallel against the same memory** (what you teach
-one agent, the other recalls; records carry a `source_agent` tag).
+A Docker-packaged "long brain" for AI agents — the memory engine itself
+doesn't know or care which agent is talking to it, so it's built to be
+**shared by any number of chat agents**, not owned by one. Each user runs
+their own independent stack — all data and memory stay private on their
+machine. By default it needs **no API key, no Ollama, and no Python on the
+host**. Two agent adapters ship today — **Hermes Desktop** and **Claude
+Code** — and they run **in parallel against the same memory** (what you
+teach one agent, the other recalls; records carry a `source_agent` tag).
+Adding a third agent later is a new adapter, not a rewrite.
 
 ## Architecture
 
@@ -97,10 +100,10 @@ whether it fits how you work.
   remember to update it, and never "forgets" stale information on its own.
   Here, recording, distilling, and recalling old information all happen
   automatically — you just chat normally.
-- **Shared across multiple AI agents, not locked to one.** Hermes Desktop
-  and Claude Code both run against the same memory in parallel: teach
-  something in one, the other already knows it — no re-explaining every
-  time you switch tools.
+- **Shared across multiple AI agents, not locked to one.** Any chat agent
+  with an adapter (today: Hermes Desktop, Claude Code) runs against the
+  same memory in parallel — teach something in one, the others already
+  know it, no re-explaining every time you switch tools.
 - **Doesn't have to cost extra money.** Runs entirely on a subscription
   you already pay for (Claude Code) or on a model running locally on your
   machine (Ollama) — a paid API key is never required.
@@ -322,15 +325,19 @@ curl localhost:8800/projects
 
 ## Per-project memory
 
-Memory is automatically partitioned by **Hermes Desktop sidebar project**:
-the hook reads the chat's working directory (`cwd`) → looks it up in
-`~/.hermes/projects.db` → stamps `project_id` on every record. When the cwd
-matches no project folder, the project currently **selected in the sidebar**
-is used — so chat-only projects work with no folder at all. Recall boosts
-same-project memories (×1.5) while cross-project knowledge can still surface
-when genuinely relevant; documents are hard-filtered by project. Creating a
-new project in the sidebar just works — zero configuration.
-Details: [ARCHITECTURE.md](ARCHITECTURE.md).
+Memory is automatically partitioned **by project**, regardless of which
+agent is chatting: the hook reads the chat's working directory (`cwd`) and
+resolves it to a project slug, stamping `project_id` on every record. Two
+folder→slug sources are merged so this works whether or not Hermes Desktop
+is even installed: Hermes' own `~/.hermes/projects.db` (sidebar projects,
+when present) and `~/.hermes/discovered_projects.json` (a fallback catalog
+the Claude Code adapter fills in on its own — see "Auto-ingest documents"
+below). When neither has a match, the project currently **selected in the
+Hermes sidebar** is used if Hermes is running — so chat-only projects work
+with no folder at all. Recall boosts same-project memories (×1.5) while
+cross-project knowledge can still surface when genuinely relevant;
+documents are hard-filtered by project. Creating a new project just works —
+zero configuration. Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Backup
 

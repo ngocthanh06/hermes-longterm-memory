@@ -1,13 +1,16 @@
-# Hermes Agent — Long-term Memory stack (LlamaIndex + Qdrant)
+# Longbrain — Bộ nhớ dài hạn dùng chung cho AI Agent (LlamaIndex + Qdrant)
 
 > 🇬🇧 English version: [README.md](README.md)
 
-"Long brain" đóng gói bằng Docker cho AI agent: mỗi người dùng chạy
-một stack độc lập trên máy của mình, dữ liệu và bộ nhớ hoàn toàn riêng tư.
-Mặc định **không cần API key, không cần Ollama, không cần Python trên host**.
-Hiện có hai adapter — **Hermes Desktop** và **Claude Code** — và chúng chạy
-**song song trên cùng một bộ nhớ** được (dạy agent này, agent kia nhớ;
-mỗi bản ghi mang nhãn `source_agent`).
+"Long brain" đóng gói bằng Docker cho AI agent — bản thân bộ máy bộ nhớ
+không biết và không quan tâm agent nào đang gọi nó, nên được thiết kế để
+**dùng chung cho bao nhiêu agent cũng được**, không thuộc về riêng agent
+nào. Mỗi người dùng chạy một stack độc lập trên máy của mình, dữ liệu và
+bộ nhớ hoàn toàn riêng tư. Mặc định **không cần API key, không cần Ollama,
+không cần Python trên host**. Hiện có hai adapter — **Hermes Desktop** và
+**Claude Code** — và chúng chạy **song song trên cùng một bộ nhớ** (dạy
+agent này, agent kia nhớ; mỗi bản ghi mang nhãn `source_agent`). Thêm agent
+thứ ba sau này chỉ là thêm 1 adapter mới, không phải viết lại từ đầu.
 
 ## Kiến trúc
 
@@ -95,10 +98,10 @@ tự quyết định có phù hợp với cách làm việc của mình hay khô
   quên sạch. Viết tay vào `CLAUDE.md` thì phải tự nhớ cập nhật, và nó không
   tự "quên" khi thông tin đã lỗi thời. Ở đây việc ghi nhớ, chưng cất, và gọi
   lại thông tin cũ đều tự động — bạn chỉ cần chat như bình thường.
-- **Dùng chung được nhiều AI agent, không phải chọn một.** Hiện hỗ trợ cả
-  Hermes Desktop và Claude Code, chạy song song trên cùng một bộ nhớ: dạy
-  điều gì đó ở agent này, agent kia tự biết — không phải giải thích lại từ
-  đầu mỗi khi đổi công cụ.
+- **Dùng chung được nhiều AI agent, không phải chọn một.** Agent nào có
+  adapter (hiện có: Hermes Desktop, Claude Code) đều chạy song song trên
+  cùng một bộ nhớ — dạy điều gì đó ở agent này, các agent khác tự biết,
+  không phải giải thích lại từ đầu mỗi khi đổi công cụ.
 - **Không nhất thiết tốn thêm tiền.** Có thể chạy hoàn toàn bằng chính
   subscription bạn đã trả (Claude Code) hoặc bằng model chạy ngay trên máy
   (Ollama) — không bắt buộc phải có API key trả phí riêng.
@@ -320,14 +323,17 @@ curl localhost:8800/projects
 
 ## Bộ nhớ theo dự án
 
-Memory tự phân vùng theo **project trong sidebar Hermes Desktop**: hook đọc
-thư mục phiên chat (`cwd`) → tra `~/.hermes/projects.db` → gắn `project_id`
-vào mọi bản ghi. Khi `cwd` không khớp thư mục của project nào, hook dùng
-project đang được **chọn trong sidebar** — nhờ vậy project chỉ-để-chat
-(không gắn thư mục) vẫn hoạt động bình thường. Truy hồi ưu tiên ký ức cùng
-dự án (boost ×1.5) nhưng vẫn thấy được ký ức dự án khác khi thực sự liên
-quan; tài liệu thì lọc cứng theo dự án. Tạo project mới trong sidebar là tự
-nhận — không cần cấu hình.
+Memory tự phân vùng **theo dự án**, bất kể agent nào đang chat: hook đọc
+thư mục phiên chat (`cwd`) rồi phân giải ra 1 slug project, gắn `project_id`
+vào mọi bản ghi. Có 2 nguồn folder→slug được gộp lại, nên hoạt động dù máy
+có cài Hermes Desktop hay không: `~/.hermes/projects.db` của Hermes (project
+trong sidebar, nếu có) và `~/.hermes/discovered_projects.json` (catalog dự
+phòng do adapter Claude Code tự ghi — xem mục "Tự động ingest tài liệu" bên
+dưới). Nếu cả 2 đều không khớp và Hermes đang chạy, hook dùng project đang
+được **chọn trong sidebar** — nhờ vậy project chỉ-để-chat (không gắn thư
+mục) vẫn hoạt động bình thường. Truy hồi ưu tiên ký ức cùng dự án (boost
+×1.5) nhưng vẫn thấy được ký ức dự án khác khi thực sự liên quan; tài liệu
+thì lọc cứng theo dự án. Tạo project mới là tự nhận — không cần cấu hình.
 Xem chi tiết: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Backup
