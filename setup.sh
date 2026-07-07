@@ -60,6 +60,32 @@ else
 fi
 
 # 5b. Wire Claude Code, if installed (hooks + MCP; works on login, no API key)
+if ! command -v claude >/dev/null 2>&1; then
+  step "Claude Code not found"
+  if [ -t 0 ] && command -v npm >/dev/null 2>&1; then
+    echo "Claude Code is the CLI that logs in with your Claude subscription (no API"
+    echo "key needed) and is what hermes-agent wires this memory stack into."
+    read -r -p "Install it now via 'npm install -g @anthropic-ai/claude-code'? [y/N] " claude_install_consent
+    case "$claude_install_consent" in
+      [yY]*)
+        if npm install -g @anthropic-ai/claude-code; then
+          echo "Installed. Run 'claude' once to log in — memory wiring continues below."
+        else
+          echo "Install failed — install manually: https://docs.claude.com/en/docs/claude-code"
+        fi
+        ;;
+      *) echo "Skipped — install manually later and re-run ./setup.sh to wire it." ;;
+    esac
+  elif [ -t 0 ]; then
+    echo "npm is not on PATH, so it can't be auto-installed here."
+    echo "Install Node.js/npm, or install Claude Code manually:"
+    echo "https://docs.claude.com/en/docs/claude-code — then re-run ./setup.sh."
+  else
+    echo "Non-interactive shell — skipping the install prompt."
+    echo "Install it and re-run ./setup.sh to wire it."
+  fi
+fi
+
 if command -v claude >/dev/null 2>&1; then
   step "Configuring Claude Code automatically"
   HERMES_CONFIGURE_CLAUDE_MD=0
@@ -81,7 +107,7 @@ if command -v claude >/dev/null 2>&1; then
   export HERMES_CONFIGURE_CLAUDE_MD
   python3 scripts/configure_claude.py
 else
-  step "Claude Code not found — skipping (install it and re-run ./setup.sh to wire it)"
+  echo "Skipping Claude Code wiring — install it and re-run ./setup.sh."
 fi
 
 # 6. Verify
