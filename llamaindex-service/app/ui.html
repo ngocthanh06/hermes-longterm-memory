@@ -619,7 +619,14 @@ function buildChips(slugs) {
     chip.className = "chip" + (selTypes.has(t) ? "" : " off");
     chip.dataset.type = t;
     chip.innerHTML = `<span class="dot" style="background:${css[TYPE_COLOR[t]]}"></span>${TYPE_GLYPH[t]} ${t} <span class="n">${count}</span>`;
-    chip.onclick = () => { toggleSet(selTypes, t, TYPES); refreshChips(); };
+    chip.onclick = () => {
+      toggleSet(selTypes, t, TYPES);
+      refreshChips();
+      // A type has no single location like a project does — the equivalent
+      // of flyToGalaxy here is snapping the camera to fit whatever is now
+      // visible, so the type dropdown "follows" the click just like project.
+      fitView();
+    };
     tc.appendChild(chip);
   }
   updateDDCounts();
