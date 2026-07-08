@@ -2,15 +2,19 @@
 
 > 🇬🇧 English version: [README.md](README.md)
 
-"Long brain" đóng gói bằng Docker cho AI agent — bản thân bộ máy bộ nhớ
-không biết và không quan tâm agent nào đang gọi nó, nên được thiết kế để
-**dùng chung cho bao nhiêu agent cũng được**, không thuộc về riêng agent
-nào. Mỗi người dùng chạy một stack độc lập trên máy của mình, dữ liệu và
-bộ nhớ hoàn toàn riêng tư. Mặc định **không cần API key, không cần Ollama,
-không cần Python trên host**. Hiện có hai adapter — **Hermes Desktop** và
-**Claude Code** — và chúng chạy **song song trên cùng một bộ nhớ** (dạy
-agent này, agent kia nhớ; mỗi bản ghi mang nhãn `source_agent`). Thêm agent
-thứ ba sau này chỉ là thêm 1 adapter mới, không phải viết lại từ đầu.
+Longbrain là một hệ thống bộ nhớ dài hạn đóng gói bằng Docker dành cho AI
+agent. Hệ thống không phụ thuộc vào bất kỳ agent nào, vì vậy nhiều agent có
+thể dùng chung cùng một bộ nhớ. Mỗi người dùng chạy một stack độc lập trên
+máy của mình, dữ liệu luôn được lưu cục bộ và hoàn toàn riêng tư.
+
+Mặc định **không cần API key, không cần Ollama, không cần cài Python trên
+máy host**.
+
+Hiện dự án hỗ trợ hai adapter: **Hermes Desktop** và **Claude Code**. Cả
+hai cùng truy cập một kho bộ nhớ, nên những gì bạn dạy ở agent này sẽ được
+agent kia nhớ lại (mỗi bản ghi mang nhãn `source_agent`). Việc bổ sung
+agent mới chỉ cần viết thêm adapter, không phải thay đổi kiến trúc của hệ
+thống.
 
 ## Kiến trúc
 
@@ -54,12 +58,11 @@ flowchart TB
 
 Chi tiết đầy đủ (sơ đồ luồng ghi/chưng cất/truy hồi, schema Qdrant, provenance đa agent...): xem [ARCHITECTURE.md](ARCHITECTURE.md).
 
-![alt text](image-1.png)
+Toàn bộ vòng đời của memory diễn ra **tự động**: ghi nhớ → truy hồi →
+chưng cất → quên có kiểm soát (tool `forget_about`) → sao lưu. Mặc định
+hệ thống sao lưu lúc 02:00 mỗi ngày và giữ lại 7 bản gần nhất.
 
-Vòng đời memory chạy **tự động hoàn toàn**: ghi → tự nhắc lại → chưng cất →
-quên có kiểm soát (tool `forget_about`) → backup đêm (2:00, giữ 7 bản).
-
-## Ngữ cảnh được ghép thế nào (và vì sao rẻ)
+## Context được xây dựng như thế nào (và vì sao chi phí luôn ổn định)
 
 Trước mỗi lượt chat, một hook gọi `POST /memory/recall`, ghép 3 nguồn thành
 một khối ngữ cảnh (context block) rồi tiêm vào prompt (sơ đồ tuần tự đầy đủ:
@@ -94,10 +97,10 @@ tự quyết định có phù hợp với cách làm việc của mình hay khô
 
 **Điểm mạnh:**
 
-- **Nhớ thật, không phải "vá tạm".** Chat bình thường thì đóng cửa sổ là
-  quên sạch. Viết tay vào `CLAUDE.md` thì phải tự nhớ cập nhật, và nó không
-  tự "quên" khi thông tin đã lỗi thời. Ở đây việc ghi nhớ, chưng cất, và gọi
-  lại thông tin cũ đều tự động — bạn chỉ cần chat như bình thường.
+- **Bộ nhớ thực sự dài hạn, không phải giải pháp tạm thời.** Chat thông
+  thường sẽ mất toàn bộ ngữ cảnh khi đóng cửa sổ. Ghi tay vào `CLAUDE.md`
+  thì phải tự cập nhật và tự dọn dẹp. Longbrain tự động ghi nhớ, chưng cất,
+  truy hồi và loại bỏ thông tin đã lỗi thời mà không cần người dùng can thiệp.
 - **Dùng chung được nhiều AI agent, không phải chọn một.** Agent nào có
   adapter (hiện có: Hermes Desktop, Claude Code) đều chạy song song trên
   cùng một bộ nhớ — dạy điều gì đó ở agent này, các agent khác tự biết,
@@ -105,12 +108,11 @@ tự quyết định có phù hợp với cách làm việc của mình hay khô
 - **Không nhất thiết tốn thêm tiền.** Có thể chạy hoàn toàn bằng chính
   subscription bạn đã trả (Claude Code) hoặc bằng model chạy ngay trên máy
   (Ollama) — không bắt buộc phải có API key trả phí riêng.
-- **Càng dùng lâu càng nhẹ, không phình to dần.** Với `CLAUDE.md` tĩnh,
-  càng ghi nhiều thì file càng to, và file đó bị nạp vào **mọi** lượt chat
-  dù có liên quan hay không — chi phí mỗi lượt tăng dần theo thời gian. Ở
-  đây hệ thống chỉ lấy đúng phần liên quan đến câu hỏi hiện tại, có giới hạn
-  kích thước cố định — bộ nhớ có phình to cỡ nào thì chi phí mỗi lượt chat
-  vẫn gần như không đổi.
+- **Chi phí mỗi lượt chat gần như không đổi theo thời gian.** Khác với
+  `CLAUDE.md`, nơi toàn bộ nội dung đều được nạp ở mỗi lượt chat, Longbrain
+  chỉ truy hồi phần liên quan nhất đến câu hỏi hiện tại và giới hạn kích
+  thước context được chèn vào prompt. Dù bộ nhớ tăng lên theo thời gian,
+  lượng token bổ sung cho mỗi lượt chat vẫn gần như giữ nguyên.
 - **Riêng tư 100%, tự chủ hoàn toàn.** Chạy trên máy bạn, dữ liệu không
   đồng bộ lên đâu cả, tự sao lưu mỗi đêm, tự kiểm soát hoàn toàn.
 - **Nhìn thấy được bộ nhớ, không phải "hộp đen".** Trang `/ui` cho xem toàn
@@ -128,8 +130,8 @@ tự quyết định có phù hợp với cách làm việc của mình hay khô
 
 - Cần cài Docker và chạy thêm 1-2 container nền — tốn thêm một chút RAM/CPU
   so với việc không dùng gì cả.
-- Có bước thiết lập ban đầu (`./setup.sh`) — tuy đã tự động hoá gần hết,
-  nhưng vẫn là một bước cài đặt thêm ngoài việc cài agent.
+- Cần thực hiện một bước cài đặt ban đầu (`./setup.sh`). Dù phần lớn đã
+  được tự động hóa, đây vẫn là một bước bổ sung so với việc chỉ cài AI agent.
 - Chất lượng thông tin được "nhớ" phụ thuộc vào model dùng để chưng cất —
   model càng yếu (ví dụ chạy Ollama trên máy yếu) thì khả năng trích xuất
   thông tin đúng/đủ càng giảm so với dùng model mạnh.
@@ -147,7 +149,7 @@ tự quyết định có phù hợp với cách làm việc của mình hay khô
 ./setup.sh
 ```
 
-**Không còn bước thủ công nào.** Script tự làm trọn: tạo `.env` → build &
+**Không còn bước thủ công nào.** Script sẽ tự động: tạo `.env` → build &
 khởi động containers → chờ healthcheck → tự wire mọi agent đã cài (agent
 nào không có thì bỏ qua):
 
@@ -434,8 +436,9 @@ archive, symlink).
 
 ## Lưu ý vận hành
 
-- **Sau mỗi lần update Hermes: chạy lại `./setup.sh`** — bản update ghi đè
-  patch `serve` (Desktop backend không đăng ký hook nếu thiếu patch này).
+- **Sau mỗi lần cập nhật Hermes Desktop, hãy chạy lại `./setup.sh`** — bản
+  update ghi đè patch `serve` (Desktop backend không đăng ký hook nếu thiếu
+  patch này).
 - **Sửa file nào trong `hooks/` xong cũng chạy lại `./setup.sh`** — consent
   hook gắn với mtime của script.
 - **Muốn xoá memory: nói với Hermes ("quên chuyện X đi") hoặc dùng API**,

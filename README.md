@@ -2,15 +2,17 @@
 
 > 🇻🇳 Bản tiếng Việt: [README.vi.md](README.vi.md)
 
-A Docker-packaged "long brain" for AI agents — the memory engine itself
-doesn't know or care which agent is talking to it, so it's built to be
-**shared by any number of chat agents**, not owned by one. Each user runs
-their own independent stack — all data and memory stay private on their
-machine. By default it needs **no API key, no Ollama, and no Python on the
-host**. Two agent adapters ship today — **Hermes Desktop** and **Claude
-Code** — and they run **in parallel against the same memory** (what you
-teach one agent, the other recalls; records carry a `source_agent` tag).
-Adding a third agent later is a new adapter, not a rewrite.
+Longbrain is a Docker-packaged long-term memory system for AI agents. It
+doesn't depend on any specific agent, so multiple agents can share the
+same memory. Each user runs their own independent stack — data is always
+stored locally and stays fully private.
+
+By default it needs **no API key, no Ollama, and no Python on the host**.
+
+Two agent adapters ship today: **Hermes Desktop** and **Claude Code**. Both
+access the same memory store, so what you teach one agent, the other
+recalls (records carry a `source_agent` tag). Adding a new agent only
+means writing a new adapter — the system's architecture doesn't change.
 
 ## Architecture
 
@@ -55,11 +57,11 @@ flowchart TB
 Full details (write/consolidate/recall sequence diagrams, Qdrant schema,
 multi-agent provenance...): see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-The memory lifecycle is **fully automatic**: record → auto-recall →
-consolidate → controlled forgetting (`forget_about` tool) → nightly backup
-(2:00 AM, 7 kept).
+The entire memory lifecycle runs **automatically**: record → recall →
+consolidate → controlled forgetting (`forget_about` tool) → backup. By
+default the system backs up at 2:00 AM daily and keeps the 7 most recent.
 
-## How context gets built (and why it's cheap)
+## How context gets built (and why the cost stays flat)
 
 Before every chat turn, a hook calls `POST /memory/recall`, which merges
 three sources into one context block that gets injected into the prompt
@@ -95,11 +97,11 @@ whether it fits how you work.
 
 **Strengths:**
 
-- **Real memory, not a workaround.** A plain chat forgets everything the
-  moment you close the window. A hand-maintained `CLAUDE.md` needs you to
-  remember to update it, and never "forgets" stale information on its own.
-  Here, recording, distilling, and recalling old information all happen
-  automatically — you just chat normally.
+- **Real long-term memory, not a stopgap.** A plain chat loses all context
+  the moment you close the window. A hand-maintained `CLAUDE.md` needs you
+  to update and clean it up yourself. Longbrain records, distills, recalls,
+  and drops outdated information automatically — no manual intervention
+  required.
 - **Shared across multiple AI agents, not locked to one.** Any chat agent
   with an adapter (today: Hermes Desktop, Claude Code) runs against the
   same memory in parallel — teach something in one, the others already
@@ -107,12 +109,11 @@ whether it fits how you work.
 - **Doesn't have to cost extra money.** Runs entirely on a subscription
   you already pay for (Claude Code) or on a model running locally on your
   machine (Ollama) — a paid API key is never required.
-- **Gets lighter over time, not heavier.** A static `CLAUDE.md` grows with
-  every note you add, and that whole file gets loaded on **every** chat
-  turn whether it's relevant or not — the cost per turn climbs over time.
-  Here, only what's actually relevant to the current question gets pulled
-  in, capped at a fixed size — no matter how much memory accumulates, the
-  cost per turn stays roughly constant.
+- **Cost per turn stays roughly flat over time.** Unlike `CLAUDE.md`, where
+  the entire file gets loaded on every chat turn, Longbrain only recalls
+  what's actually relevant to the current question and caps the size of
+  what gets injected into the prompt. As memory grows over time, the extra
+  tokens spent per turn stay about the same.
 - **Fully private, fully yours.** Runs on your machine, nothing syncs
   anywhere, nightly backups, complete control.
 - **The memory is visible, not a black box.** The `/ui` page shows
@@ -131,8 +132,8 @@ whether it fits how you work.
 
 - Needs Docker and runs 1-2 background containers — a bit more RAM/CPU
   than running nothing at all.
-- There's an initial setup step (`./setup.sh`) — mostly automated, but
-  still one more install step beyond the agent itself.
+- Requires one initial setup step (`./setup.sh`). Most of it is automated,
+  but it's still an extra step beyond just installing the AI agent.
 - The quality of what gets "remembered" depends on the model doing the
   distillation — a weaker model (e.g. Ollama on modest hardware) extracts
   facts less reliably than a stronger one.
@@ -150,7 +151,7 @@ whether it fits how you work.
 ./setup.sh
 ```
 
-**No manual steps remain.** The script does everything: creates `.env` →
+**No manual steps remain.** The script automatically: creates `.env` →
 builds & starts containers → waits for health → wires every installed agent
 (each is skipped gracefully when absent):
 
@@ -436,8 +437,9 @@ cwd→project resolution (longest prefix, archived projects, symlinks).
 
 ## Operational notes
 
-- **After every Hermes update: re-run `./setup.sh`** — updates overwrite the
-  `serve` patch (without it the Desktop backend never registers hooks).
+- **After every Hermes Desktop update, re-run `./setup.sh`** — updates
+  overwrite the `serve` patch (without it the Desktop backend never
+  registers hooks).
 - **After editing any file in `hooks/`: re-run `./setup.sh`** — hook consent
   is tied to the script's mtime.
 - **To delete memory, tell Hermes ("forget about X") or use the API** —
