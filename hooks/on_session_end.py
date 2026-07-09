@@ -13,18 +13,15 @@ import os
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from post_llm_call import debug_dump  # noqa: E402
+
 MEMORY_URL = os.environ.get("HERMES_MEMORY_URL", "http://localhost:8800") + "/memory/consolidate"
-DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "hook-debug.jsonl")
 
 
 def main():
     raw = sys.stdin.read()
-    try:
-        os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
-        with open(DEBUG_LOG, "a") as f:
-            f.write(raw.strip().replace("\n", " ") + "\n")
-    except Exception:
-        pass
+    debug_dump(raw)
 
     try:
         payload = json.loads(raw)

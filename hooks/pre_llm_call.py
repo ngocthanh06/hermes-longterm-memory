@@ -18,10 +18,14 @@ import urllib.request
 
 # Reuse the sidebar-project resolver from the sibling hook.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from post_llm_call import DEBUG_LOG, resolve_project  # noqa: E402
+from post_llm_call import debug_dump, env_int, resolve_project  # noqa: E402
 
 MEMORY_URL = os.environ.get("HERMES_MEMORY_URL", "http://localhost:8800") + "/memory/recall"
 TIMEOUT = float(os.environ.get("HERMES_MEMORY_RECALL_TIMEOUT", "3"))
+# Same token gates as the Claude Code adapter (hooks/claude/user_prompt_submit.py):
+# skip recall for prompts too short to carry meaning, cap the injected block.
+MAX_CONTEXT_CHARS = env_int("HERMES_MEMORY_MAX_CONTEXT", 6000)
+MIN_PROMPT_CHARS = env_int("HERMES_RECALL_MIN_PROMPT_CHARS", 15)
 
 
 def _extract_query(payload: dict) -> str:
@@ -39,12 +43,7 @@ def _extract_query(payload: dict) -> str:
 
 def main():
     raw = sys.stdin.read()
-    try:
-        os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
-        with open(DEBUG_LOG, "a") as f:
-            f.write(raw.strip().replace("\n", " ") + "\n")
-    except Exception:
-        pass
+    debug_dump(raw)
 
     try:
         payload = json.loads(raw)
@@ -53,7 +52,7 @@ def main():
         return
 
     query = _extract_query(payload)
-    if not query.strip():
+    if len(query.strip()) < MIN_PROMPT_CHARS:
         print("{}")
         return
 
@@ -78,7 +77,7 @@ def main():
     context = (result.get("context_block") or "").strip()
     if context:
         print(json.dumps(
-            {"context": "Long-term memory (auto-recalled):\n" + context},
+            {"context": "Long-term memory (auto-recalled):\n" + context[:MAX_CONTEXT_CHARS]},
             ensure_ascii=False,
         ))
     else:

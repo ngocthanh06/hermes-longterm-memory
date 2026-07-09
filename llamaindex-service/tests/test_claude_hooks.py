@@ -153,3 +153,40 @@ def test_resolve_git_root_names_the_project(hermes_db):
     assert resolve_project(str(sub)) == ("myrepo", "folder")
     catalog = json.loads(project_catalog.CATALOG_FILE.read_text())
     assert catalog["myrepo"]["path"] == str(repo)
+
+
+# ---------------------------------------------------------------------------
+# debug logging: opt-in only, truncated, env parsed defensively
+# ---------------------------------------------------------------------------
+import common  # noqa: E402
+
+
+def test_debug_dump_writes_nothing_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "DEBUG_LOG", str(tmp_path / "dbg.jsonl"))
+    monkeypatch.setattr(common, "DEBUG_HOOKS", False)
+    common.debug_dump('{"prompt": "full private prompt"}')
+    assert not (tmp_path / "dbg.jsonl").exists()
+
+
+def test_debug_dump_opt_in_appends_truncated(monkeypatch, tmp_path):
+    log = tmp_path / "dbg.jsonl"
+    monkeypatch.setattr(common, "DEBUG_LOG", str(log))
+    monkeypatch.setattr(common, "DEBUG_HOOKS", True)
+    monkeypatch.setattr(common, "DEBUG_MAX_CHARS", 10)
+    common.debug_dump("x" * 100)
+    assert log.read_text() == "x" * 10 + "\n"
+
+
+def test_debug_gate_defaults_off_without_env(monkeypatch):
+    # Fresh evaluation of the import-time gate: env unset -> disabled.
+    monkeypatch.delenv("HERMES_DEBUG_HOOKS", raising=False)
+    import importlib
+    reloaded = importlib.reload(common)
+    assert reloaded.DEBUG_HOOKS is False
+
+
+def test_env_int_malformed_value_falls_back(monkeypatch):
+    monkeypatch.setenv("HERMES_TEST_INT", "abc")
+    assert common.env_int("HERMES_TEST_INT", 42) == 42
+    monkeypatch.setenv("HERMES_TEST_INT", "7")
+    assert common.env_int("HERMES_TEST_INT", 7) == 7

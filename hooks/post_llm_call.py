@@ -101,13 +101,33 @@ def resolve_project_with_source(cwd: str) -> tuple:
     return "default", "default"
 
 
-def _debug_dump(raw: str) -> None:
+def env_int(name: str, default: int) -> int:
+    """Env override parsed defensively: a malformed value ("abc") must not
+    crash a best-effort hook at import time — fall back to the default."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Hook payloads carry full prompts/responses, so always-on raw logging is a
+# privacy leak plus unbounded disk growth. Opt-in only, truncated.
+DEBUG_HOOKS = os.environ.get("HERMES_DEBUG_HOOKS") == "1"
+DEBUG_MAX_CHARS = env_int("HERMES_DEBUG_HOOKS_MAX_CHARS", 2000)
+
+
+def debug_dump(raw: str) -> None:
+    if not DEBUG_HOOKS:
+        return
     try:
         os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
         with open(DEBUG_LOG, "a") as f:
-            f.write(raw.strip().replace("\n", " ") + "\n")
+            f.write(raw.strip().replace("\n", " ")[:DEBUG_MAX_CHARS] + "\n")
     except Exception:
         pass
+
+
+_debug_dump = debug_dump  # internal call sites
 
 
 def _extract(payload: dict) -> tuple[str, str, str]:

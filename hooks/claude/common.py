@@ -37,11 +37,28 @@ from project_catalog import record_project_folder  # noqa: E402
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
+def env_int(name: str, default: int) -> int:
+    """Env override parsed defensively: a malformed value ("abc") must not
+    crash a best-effort hook at import time — fall back to the default."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Hook payloads carry full prompts/responses, so always-on raw logging is a
+# privacy leak plus unbounded disk growth. Opt-in only, truncated.
+DEBUG_HOOKS = os.environ.get("HERMES_DEBUG_HOOKS") == "1"
+DEBUG_MAX_CHARS = env_int("HERMES_DEBUG_HOOKS_MAX_CHARS", 2000)
+
+
 def debug_dump(raw: str) -> None:
+    if not DEBUG_HOOKS:
+        return
     try:
         os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
         with open(DEBUG_LOG, "a") as f:
-            f.write(raw.strip().replace("\n", " ") + "\n")
+            f.write(raw.strip().replace("\n", " ")[:DEBUG_MAX_CHARS] + "\n")
     except Exception:
         pass
 
@@ -65,6 +82,15 @@ def post_json(path: str, body: dict, timeout: float = 5.0):
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None  # best-effort — never break the session
+
+
+def get_json(path: str, timeout: float = 3.0):
+    """GET from the memory service; parsed JSON, or None on any failure."""
+    try:
+        with urllib.request.urlopen(MEMORY_BASE + path, timeout=timeout) as resp:
             return json.loads(resp.read())
     except Exception:
         return None  # best-effort — never break the session
