@@ -13,7 +13,9 @@ Run via setup.sh (or directly). Idempotent — safe to re-run. Steps:
                    every project.
 3. CLAUDE.md     — opt-in only (HERMES_CONFIGURE_CLAUDE_MD=1, set by setup.sh
                    after asking the user): append/update a marked block in
-                   ~/.claude/CLAUDE.md telling Claude to prefer the
+                   ~/.claude/CLAUDE.md telling Claude to (a) search the
+                   shared memory (search_history / memory_recall) before
+                   declaring past-session context lost, and (b) prefer the
                    mcp__hermes-memory__* tools over its own built-in
                    file-based auto-memory when both are available.
 
@@ -43,16 +45,30 @@ MCP_URL = "http://localhost:8800/mcp"
 MARKER_START = "<!-- hermes-agent:memory-priority:start (auto-managed by hermes-agent setup, do not edit inside) -->"
 MARKER_END = "<!-- hermes-agent:memory-priority:end -->"
 CLAUDE_MD_BLOCK = f"""{MARKER_START}
-## Long-term memory priority (hermes-agent)
-When you decide on your own to save long-term memory (a fact, decision, or
-preference worth keeping), prefer calling the `mcp__hermes-memory__*` tools
-(e.g. `save_memories`, `add_to_knowledge_base`) if they appear in this
-session's tool list — that memory is shared across agents via a local
-service at http://localhost:8800.
+## Long-term memory (hermes-agent) — shared across agents
+
+**Recall (read):** When the user refers to content from a previous
+conversation or session that is not in your current context (e.g. "the
+review from earlier", "as we discussed last time", "give me that again"),
+do NOT declare the context lost or redo the work from scratch. FIRST call
+`mcp__hermes-memory__search_history` (and `mcp__hermes-memory__memory_recall`
+for distilled facts) to retrieve it. The memory service stores past turns
+from ALL connected agents (Claude Code, Hermes Desktop, …), so the answer
+may exist even when this session has no trace of it. Only fall back to
+reconstructing from code/files when the memory search returns nothing
+relevant — and say that the search came up empty.
+
+**Save (write):** When you decide on your own to save long-term memory (a
+fact, decision, or preference worth keeping), prefer calling the
+`mcp__hermes-memory__*` tools (e.g. `save_memories`,
+`add_to_knowledge_base`) if they appear in this session's tool list — that
+memory is shared across agents via a local service at
+http://localhost:8800.
+
 Only fall back to your own built-in file-based auto-memory
-(`~/.claude/projects/.../memory/*.md`) when no `mcp__hermes-memory__*` tools
-are available in this session (the MCP server is not registered or not
-reachable).
+(`~/.claude/projects/.../memory/*.md`) when no `mcp__hermes-memory__*`
+tools are available in this session (the MCP server is not registered or
+not reachable).
 {MARKER_END}"""
 
 # Claude Code event -> (script under hooks/claude/, timeout seconds)
