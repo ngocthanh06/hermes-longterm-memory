@@ -1,0 +1,100 @@
+{
+ "summary": {
+  "include_hits": 9,
+  "include_expected": 9,
+  "violations": 0,
+  "total_chars": 5894
+ },
+ "cases": [
+  {
+   "name": "vn-project-fact-db",
+   "hits": [
+    "PostgreSQL"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 781,
+   "note": ""
+  },
+  {
+   "name": "vn-project-decision",
+   "hits": [
+    "job hoàn thành"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 563,
+   "note": ""
+  },
+  {
+   "name": "vn-cross-project-isolation",
+   "hits": [
+    "edge-to-edge"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 598,
+   "note": "decision của shopmed không được lọt vào câu hỏi thuần bookinghub — thước đo cho #4 (global vs project scope)"
+  },
+  {
+   "name": "vn-global-preference",
+   "hits": [
+    "Co-Authored-By"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 796,
+   "note": ""
+  },
+  {
+   "name": "vn-history-trigger",
+   "hits": [
+    "conditional UPDATE"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 697,
+   "note": ""
+  },
+  {
+   "name": "vn-history-other-project",
+   "hits": [
+    "start_period"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 460,
+   "note": ""
+  },
+  {
+   "name": "ja-docs-error-message",
+   "hits": [
+    "10MB"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 596,
+   "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+  },
+  {
+   "name": "en-docs-availability",
+   "hits": [
+    "capacity_per_unit"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 1017,
+   "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+  },
+  {
+   "name": "vn-noise-rejection",
+   "hits": [
+    "PSR12"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 386,
+   "note": ""
+  }
+ ]
+}

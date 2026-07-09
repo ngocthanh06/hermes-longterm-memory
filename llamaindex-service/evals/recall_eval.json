@@ -1,0 +1,93 @@
+{
+  "_comment": "Recall quality evaluation set. corpus = what gets seeded into a throwaway in-memory Qdrant; cases = queries with substrings the recall context block MUST contain (expect_include) and MUST NOT contain (expect_exclude). Cases marked with a note may fail against the current pipeline on purpose — the baseline records reality, improvements are measured as diffs. Run: scripts/recall_eval.py (inside the service container, real embedding model).",
+  "corpus": {
+    "facts": [
+      {"text": "Dự án shopmed dùng PostgreSQL với PostGIS làm database chính", "type": "fact", "project": "shopmed", "source_agent": "claude-code"},
+      {"text": "Dự án shopmed: mọi lệnh chạy trong Docker container, lint backend dùng phpcs chuẩn PSR12", "type": "fact", "project": "shopmed", "source_agent": "claude-code"},
+      {"text": "Quyết định của dự án shopmed: đếm lượt sử dụng AI import tại thời điểm job hoàn thành, không phải lúc tạo job", "type": "decision", "project": "shopmed", "source_agent": "claude-code"},
+      {"text": "Dự án bookinghub viết bằng Go theo clean architecture, 5 module: auth, booking, merchant, user, example", "type": "fact", "project": "bookinghub", "source_agent": "claude-code"},
+      {"text": "Quyết định của dự án bookinghub: hai booking chạm cạnh (edge-to-edge) không tính là trùng giờ", "type": "decision", "project": "bookinghub", "source_agent": "hermes"},
+      {"text": "Người dùng yêu cầu commit với tác giả cá nhân của họ, không thêm dòng Co-Authored-By nào khác", "type": "preference", "project": "default", "source_agent": "claude-code"},
+      {"text": "Người dùng thích giao diện cuộn chuột mượt và hiệu ứng zoom khi lọc dữ liệu", "type": "preference", "project": "default", "source_agent": "hermes"},
+      {"text": "Người dùng muốn mọi comment trong code viết bằng tiếng Anh", "type": "preference", "project": "default", "source_agent": "claude-code"}
+    ],
+    "history": [
+      {"session": "s-review-1", "project": "shopmed", "role": "user", "content": "review giúp tôi 2 commit mới về tính năng giới hạn lượt dùng AI import"},
+      {"session": "s-review-1", "project": "shopmed", "role": "assistant", "content": "Đã review xong 2 commit: commit thứ nhất thêm kiểm tra giới hạn tháng trước khi tạo job, commit thứ hai sửa incrementUsedCount thành conditional UPDATE để an toàn race condition. Đề xuất thêm test cho trường hợp job bị huỷ."},
+      {"session": "s-deploy-2", "project": "bookinghub", "role": "user", "content": "deploy staging bookinghub bị lỗi healthcheck timeout"},
+      {"session": "s-deploy-2", "project": "bookinghub", "role": "assistant", "content": "Nguyên nhân healthcheck timeout là container Postgres khởi động chậm hơn app; đã sửa depends_on với condition service_healthy và tăng start_period lên 30 giây."}
+    ],
+    "documents": [
+      {"project": "shopmed", "source": "AIインポート_エラーメッセージ仕様.md", "text": "# AI インポート エラーメッセージ仕様\n\n| 状況 | 表示メッセージ |\n|---|---|\n| ファイルサイズ超過 | ファイルサイズが上限（10MB）を超えています。ファイルを分割するか、サイズを小さくしてから、もう一度アップロードしてください。 |\n| 月間利用上限 | 今月の利用回数の上限に達しました。来月になってから、もう一度お試しください。 |\n| 非対応ファイル形式 | このファイル形式には対応していません。PDF・PowerPoint・Word 形式のファイルをアップロードしてください。 |"},
+      {"project": "bookinghub", "source": "booking-availability-spec.md", "text": "# Booking availability specification\n\nSlots are generated every slot_interval_minutes (default 15). For each slot the lock window is [slot_time, slot_time + duration]. A slot is available when people <= capacity_per_unit AND remaining_units >= 1. Approved bookings overlapping the lock window occupy units; edge-to-edge bookings do not overlap (exclusive boundary)."}
+    ]
+  },
+  "cases": [
+    {
+      "name": "vn-project-fact-db",
+      "query": "dự án shopmed đang dùng database gì?",
+      "project": "shopmed",
+      "expect_include": ["PostgreSQL"],
+      "expect_exclude": ["cuộn chuột mượt"]
+    },
+    {
+      "name": "vn-project-decision",
+      "query": "lượt sử dụng AI import được đếm lúc nào?",
+      "project": "shopmed",
+      "expect_include": ["job hoàn thành"],
+      "expect_exclude": ["edge-to-edge"]
+    },
+    {
+      "name": "vn-cross-project-isolation",
+      "query": "quy tắc trùng giờ booking như thế nào?",
+      "project": "bookinghub",
+      "expect_include": ["edge-to-edge"],
+      "expect_exclude": ["AI import"],
+      "note": "decision của shopmed không được lọt vào câu hỏi thuần bookinghub — thước đo cho #4 (global vs project scope)"
+    },
+    {
+      "name": "vn-global-preference",
+      "query": "khi commit code cần lưu ý gì về tác giả?",
+      "project": "shopmed",
+      "expect_include": ["Co-Authored-By"],
+      "expect_exclude": []
+    },
+    {
+      "name": "vn-history-trigger",
+      "query": "lần trước đã review 2 commit về giới hạn lượt dùng, kết luận là gì?",
+      "project": "shopmed",
+      "expect_include": ["conditional UPDATE"],
+      "expect_exclude": ["healthcheck"]
+    },
+    {
+      "name": "vn-history-other-project",
+      "query": "hôm trước deploy staging lỗi gì và đã sửa ra sao?",
+      "project": "bookinghub",
+      "expect_include": ["start_period"],
+      "expect_exclude": []
+    },
+    {
+      "name": "ja-docs-error-message",
+      "query": "tài liệu spec ghi thông báo lỗi khi file vượt dung lượng là gì?",
+      "project": "shopmed",
+      "expect_include": ["10MB"],
+      "expect_exclude": [],
+      "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+    },
+    {
+      "name": "en-docs-availability",
+      "query": "theo tài liệu thiết kế, khi nào một slot được coi là available?",
+      "project": "bookinghub",
+      "expect_include": ["capacity_per_unit"],
+      "expect_exclude": [],
+      "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+    },
+    {
+      "name": "vn-noise-rejection",
+      "query": "cấu hình lint của shopmed là gì?",
+      "project": "shopmed",
+      "expect_include": ["PSR12"],
+      "expect_exclude": ["zoom"]
+    }
+  ]
+}
