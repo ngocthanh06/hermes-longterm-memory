@@ -349,3 +349,97 @@ def test_source_agent_stamped_and_optional(client):
                         source_agent="hermes")
     fact = memories.list_facts(client)[0]
     assert fact["source_agent"] == "hermes"
+
+
+# ---------------------------------------------------------------------------
+# project-scoped dedup/supersede (facts in different projects are distinct)
+# ---------------------------------------------------------------------------
+def test_same_text_in_two_projects_both_kept(client):
+    embed = FakeEmbed()
+    r1 = memories.save_facts(client, embed, [{"text": "Deploy uses Docker"}],
+                             project_id="proj-a")
+    r2 = memories.save_facts(client, embed, [{"text": "Deploy uses Docker"}],
+                             project_id="proj-b")
+    assert r1[0]["status"] == "new"
+    assert r2[0]["status"] == "new"  # neither "duplicate" nor "supersedes"
+    active = memories.list_facts(client)
+    assert sorted(f["project_id"] for f in active) == ["proj-a", "proj-b"]
+
+
+def test_near_duplicate_supersedes_only_within_project(client):
+    embed = FakeEmbed({
+        "Deadline is Friday": _unit(0),
+        "Deadline is on Friday": _unit(5),  # cos(5°) ≈ 0.996 ≥ 0.92
+    })
+    memories.save_facts(client, embed, [{"text": "Deadline is Friday"}],
+                        project_id="proj-a")
+    # Other project: near-identical text must NOT retire proj-a's fact.
+    r_other = memories.save_facts(client, embed, [{"text": "Deadline is on Friday"}],
+                                  project_id="proj-b")
+    assert r_other[0]["status"] == "new"
+    # Same project: the usual supersede still fires.
+    r_same = memories.save_facts(client, embed, [{"text": "Deadline is on Friday"}],
+                                 project_id="proj-a")
+    assert r_same[0]["status"] == "supersedes"
+    assert r_same[0]["superseded"] == ["Deadline is Friday"]
+
+
+def test_retagged_fact_same_text_supersedes_not_duplicate(client):
+    """Documented residual of project-scoped ids: /ui can retag a fact to a
+    new project, but its point id still carries the ORIGINAL project. An
+    exact re-save under the new project then lands as a fresh point and
+    retires the retagged one via supersede — not as an id-level "duplicate".
+    This test locks that behavior."""
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "Movable fact"}], project_id="proj-a")
+    old_id = memories.fact_point_id(config.USER_ID, "Movable fact", "proj-a")
+    client.set_payload(collection_name=config.MEMORIES_COLLECTION,
+                       payload={"project_id": "proj-b"}, points=[old_id])
+    r = memories.save_facts(client, embed, [{"text": "Movable fact"}], project_id="proj-b")
+    assert r[0]["status"] == "supersedes"
+    assert r[0]["superseded"] == ["Movable fact"]
+
+
+# ---------------------------------------------------------------------------
+# importance parsing (LLM consolidation output is untrusted)
+# ---------------------------------------------------------------------------
+def test_unparseable_importance_defaults_instead_of_crashing(client):
+    # Far-apart vectors: these three must not fall into each other's
+    # supersede band — this test is about importance parsing only.
+    embed = FakeEmbed({
+        "importance is a word": _unit(0),
+        "importance is null": _unit(80),
+        "importance out of range": _unit(160),
+    })
+    r = memories.save_facts(client, embed, [
+        {"text": "importance is a word", "importance": "high"},
+        {"text": "importance is null", "importance": None},
+        {"text": "importance out of range", "importance": 7},
+    ])
+    assert [x["status"] for x in r] == ["new", "new", "new"]
+    by_text = {f["text"]: f["importance"] for f in memories.list_facts(client)}
+    assert by_text["importance is a word"] == 0.5
+    assert by_text["importance is null"] == 0.5
+    assert by_text["importance out of range"] == 1.0  # clamped, not defaulted
+
+
+# ---------------------------------------------------------------------------
+# recall context block carries agent provenance
+# ---------------------------------------------------------------------------
+def test_recall_context_block_shows_source_agent(client):
+    # Both facts sit close to the query (0°) but 30° apart from each other:
+    # similar enough to be recalled, distinct enough not to supersede.
+    embed = FakeEmbed({
+        "tagged by claude": _unit(15),
+        "untagged legacy fact": _unit(-15),
+    })
+    memories.save_facts(client, embed, [{"text": "tagged by claude"}],
+                        source_agent="claude-code")
+    memories.save_facts(client, embed, [{"text": "untagged legacy fact"}])
+    memory_store.add_message(client, embed, "s-hist", "user", "hello from hermes",
+                             source_agent="hermes")
+    block = memories.recall(client, embed, "anything", recent_turns=0)["context_block"]
+    assert ", claude-code) tagged by claude" in block
+    assert ", hermes) user: hello from hermes" in block
+    # a record without the tag renders without a dangling separator
+    assert ") untagged legacy fact" in block and ", ) untagged" not in block

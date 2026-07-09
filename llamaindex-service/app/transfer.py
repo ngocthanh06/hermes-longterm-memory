@@ -173,7 +173,10 @@ def _import_facts(client: QdrantClient, embed_model, facts: list[dict]) -> dict:
         text = (f.get("text") or "").strip()
         if not text:
             continue
-        rows.setdefault(memories.fact_point_id(config.USER_ID, text), (text, f))
+        rows.setdefault(
+            memories.fact_point_id(config.USER_ID, text, f.get("project_id") or ""),
+            (text, f),
+        )
     existing = _existing_ids(client, config.MEMORIES_COLLECTION, list(rows))
     imported = 0
     for point_id, (text, f) in rows.items():

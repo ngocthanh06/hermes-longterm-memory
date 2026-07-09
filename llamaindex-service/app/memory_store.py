@@ -201,6 +201,8 @@ def get_recent_turns(
     user_id: str = config.USER_ID,
     limit: int = config.RECALL_RECENT_TURNS,
 ) -> list[dict]:
+    if limit <= 0:
+        return []  # points[-0:] would be the WHOLE session, not none
     points = _session_points(client, session_id, user_id, config.CHAT_HISTORY_MAX_MESSAGES)
     return [
         {"role": p.payload["role"], "content": p.payload["content"],
@@ -249,6 +251,7 @@ def search_history(
                 "session_id": h.payload["session_id"],
                 "project_id": hit_project,
                 "timestamp": h.payload.get("timestamp"),
+                "source_agent": h.payload.get("source_agent") or "",
                 "score": score,
             }
         )

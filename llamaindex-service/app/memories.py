@@ -43,9 +43,15 @@ def is_meta_about_assistant(text: str) -> bool:
     return bool(_META_ABOUT_ASSISTANT_RE.search(text))
 
 
-def fact_point_id(user_id: str, text: str) -> str:
+def fact_point_id(user_id: str, text: str, project_id: str = "") -> str:
+    """Deterministic id per (user, project, normalized text). The project is
+    part of the identity: the same sentence can be a distinct fact in two
+    projects, and exact-text dedup must not swallow it across them. Legacy
+    points (pre-project ids) stay valid — a re-save of their text lands as a
+    new point and the project-scoped supersede search retires the old one."""
     digest = hashlib.sha256(" ".join(text.split()).lower().encode("utf-8")).hexdigest()
-    return str(uuid.uuid5(_NAMESPACE, f"fact:{user_id}:{digest}"))
+    scope = project_id or config.DEFAULT_PROJECT
+    return str(uuid.uuid5(_NAMESPACE, f"fact:{user_id}:{scope}:{digest}"))
 
 
 def _active_filter(user_id: str, extra: list | None = None) -> qmodels.Filter:
@@ -93,6 +99,7 @@ def save_facts(
     # synthetic id per CALL, shared by every fact in this batch.
     if not session_id:
         session_id = f"direct:{uuid.uuid4().hex[:12]}"
+    project_id = project_id or config.DEFAULT_PROJECT
     results = []
     for fact in facts:
         text = (fact.get("text") or "").strip()
@@ -104,9 +111,12 @@ def save_facts(
         ftype = fact.get("type", "fact")
         if ftype not in VALID_TYPES:
             ftype = "fact"
-        importance = min(max(float(fact.get("importance", 0.5)), 0.0), 1.0)
+        try:
+            importance = min(max(float(fact.get("importance", 0.5)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            importance = 0.5  # LLM consolidation may emit "high"/null — don't fail the save
 
-        point_id = fact_point_id(user_id, text)
+        point_id = fact_point_id(user_id, text, project_id)
         existing = client.retrieve(
             collection_name=config.MEMORIES_COLLECTION, ids=[point_id], with_payload=False
         )
@@ -122,11 +132,18 @@ def save_facts(
         # band catches reworded/summarized restatements that score too low on
         # raw cosine to trust blindly (see config.py) — an LLM judges those,
         # and only when one is configured (LLM_PROVIDER=none skips the band).
+        # Scope the supersede search to this fact's project: near-identical
+        # facts in DIFFERENT projects are distinct knowledge, and letting one
+        # retire the other silently loses the other project's memory.
         superseded = []
         hits = client.search(
             collection_name=config.MEMORIES_COLLECTION,
             query_vector=vector,
-            query_filter=_active_filter(user_id),
+            query_filter=_active_filter(user_id, extra=[
+                qmodels.FieldCondition(
+                    key="project_id", match=qmodels.MatchValue(value=project_id)
+                ),
+            ]),
             limit=5,
             score_threshold=config.DEDUP_LLM_CHECK_MIN,
             with_payload=["text"],
@@ -203,6 +220,7 @@ def search_memories(
                 "project_id": hit_project,
                 "importance": importance,
                 "created_at": h.payload.get("created_at"),
+                "source_agent": h.payload.get("source_agent") or "",
                 "similarity": h.score,
                 "score": final,
             }
@@ -488,14 +506,23 @@ def recall(
         else []
     )
 
+    # Tag entries with the agent that produced them ("long brain + N
+    # adapters": the reader should know a hit came from another agent).
+    def _agent(entry: dict) -> str:
+        return f", {entry['source_agent']}" if entry.get("source_agent") else ""
+
     lines: list[str] = []
     if mems:
         lines.append("[Long-term memories]")
-        lines += [f"- ({m['type']}, {_fmt_date(m['created_at'])}) {m['text']}" for m in mems]
+        lines += [
+            f"- ({m['type']}, {_fmt_date(m['created_at'])}{_agent(m)}) {m['text']}"
+            for m in mems
+        ]
     if history:
         lines.append("[Related past conversations]")
         lines += [
-            f"- ({h['session_id']}, {_fmt_date(h['timestamp'])}) {h['role']}: {h['content'][:300]}"
+            f"- ({h['session_id']}, {_fmt_date(h['timestamp'])}{_agent(h)}) "
+            f"{h['role']}: {h['content'][:300]}"
             for h in history
         ]
     if recent:

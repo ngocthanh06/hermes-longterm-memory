@@ -1,3 +1,4 @@
+from app import config
 from app.memories import fact_point_id
 from app.memory_store import message_point_id
 
@@ -26,3 +27,14 @@ def test_fact_id_differs_for_different_text_or_user():
     a = fact_point_id("local", "User likes Qdrant")
     assert fact_point_id("local", "User likes Redis") != a
     assert fact_point_id("other", "User likes Qdrant") != a
+
+
+def test_fact_id_scopes_by_project():
+    # The same sentence is a distinct fact in two projects.
+    assert fact_point_id("local", "x", "proj-a") != fact_point_id("local", "x", "proj-b")
+
+
+def test_fact_id_empty_project_equals_default():
+    # "" and the explicit default slug must mint the SAME id, or every
+    # caller that omits the project would duplicate default-project facts.
+    assert fact_point_id("local", "x") == fact_point_id("local", "x", config.DEFAULT_PROJECT)
