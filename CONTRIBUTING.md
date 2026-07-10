@@ -14,7 +14,7 @@ cd longbrain
 
 The service lives in `llamaindex-service/` (FastAPI), agent adapters in
 `hooks/` (Hermes Desktop, Claude Code) and `adapters/` (SDK + examples).
-Architecture deep-dive: [ARCHITECTURE.md](ARCHITECTURE.md).
+Architecture deep-dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Running tests
 

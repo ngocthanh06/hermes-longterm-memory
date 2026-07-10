@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase C decision-point benchmark (see UPGRADE_PLAN.md): does
+"""Phase C decision-point benchmark (see docs/ROADMAP.md): does
 intfloat/multilingual-e5-large recall real Vietnamese memories/documents
 better than the current paraphrase-multilingual-MiniLM-L12-v2? A one-off
 analysis tool, not part of the running service.

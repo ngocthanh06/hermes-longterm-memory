@@ -1,6 +1,6 @@
 # Longbrain Architecture
 
-Detailed technical documentation. For quick install/usage instructions see [README.md](README.md).
+Detailed technical documentation. For quick install/usage instructions see [README.md](../README.md).
 
 > Diagrams in this document use [Mermaid](https://mermaid.js.org/) fenced
 > code blocks — they render natively on GitHub/GitLab and in VS Code /
@@ -358,8 +358,7 @@ longbrain/
 ├── setup.sh                     # one-command install: Docker + auto-wiring for every installed agent
 ├── docker-compose.yml           # qdrant + llamaindex (+ optional ollama profile)
 ├── .env.example                 # provider/collection configuration
-├── ARCHITECTURE.md              # this document
-├── UPGRADE_PLAN.md              # roadmap + progress
+├── docs/                        # this document, user guide, API reference, operations, roadmap
 ├── hooks/
 │   ├── post_llm_call.py         # Hermes: record each turn (project resolution: folder → active sidebar → default)
 │   ├── pre_llm_call.py          # Hermes: auto-inject recalled memory into every turn

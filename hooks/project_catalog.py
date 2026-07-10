@@ -4,7 +4,7 @@ Hermes' own ~/.hermes/projects.db is the source of truth for project
 folders when Hermes Desktop is installed — but a user who only runs
 Claude Code (or a future third adapter) never has it: Hermes Desktop
 can't log in with a Claude subscription, so plenty of users only ever
-install the Claude Code side (see ARCHITECTURE.md §7b/§8).
+install the Claude Code side (see docs/ARCHITECTURE.md §7b/§8).
 
 Any hook that resolves a project from a REAL cwd folder (source ==
 "folder", never the ambient "active"/"default" signals) records the

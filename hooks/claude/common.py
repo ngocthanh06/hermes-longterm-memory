@@ -14,7 +14,7 @@ Project resolution keeps parallel operation with Hermes coherent:
    a project.
 3. "default".
 Both 1 and 2 report source="folder": cwd is a genuine workspace signal,
-so the server-side intentional-move override applies (see ARCHITECTURE.md).
+so the server-side intentional-move override applies (see docs/ARCHITECTURE.md).
 """
 
 import json
