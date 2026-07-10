@@ -374,6 +374,8 @@ longbrain/
 ├── scripts/
 │   ├── configure_hermes.py      # auto-patch config.yaml + consent + serve bug + app restart
 │   ├── configure_claude.py      # auto-wire Claude Code (settings.json hooks + MCP registration)
+│   ├── configure_codex.py       # auto-wire Codex at MCP-only tier (config.toml MCP entry)
+│   ├── doctor.py                # read-only wiring + health check across all agents (--fix)
 │   ├── backup.sh                # Qdrant snapshots (nightly via launchd)
 │   ├── ingest_watcher.py        # auto-ingest each project's docs/ folder (60s poll via launchd)
 │   ├── memory_transfer.sh       # text-level export/import for device migration (§12)

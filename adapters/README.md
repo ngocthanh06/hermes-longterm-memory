@@ -16,6 +16,33 @@ Two reference implementations ship in this repo:
 `python_minimal/adapter.py` in this folder is a single-file skeleton to
 copy from.
 
+## Support tiers
+
+Not every agent exposes lifecycle hooks, so support comes in tiers. The
+core stays agent-agnostic either way — a tier describes how much of the
+lifecycle an agent's adapter can automate:
+
+- **Full adapter** — all 4 lifecycle moments are automatic: recall before
+  every prompt, append after every response, consolidate on session end,
+  catch-up on session start.
+- **MCP-only** — the model can call the memory tools on its own initiative
+  (`memory_recall`, `save_memories`, `search_history`, …) but the agent has
+  no hooks, so turns are **not** recorded automatically.
+- **Generic MCP client** — anything speaking MCP can connect manually;
+  no setup automation.
+
+| Agent | Recall auto | Write chat auto | Consolidate auto | Setup |
+|---|---|---|---|---|
+| Claude Code | ✅ | ✅ | ✅ | `./setup.sh` |
+| Hermes Desktop | ✅ | ✅ | ✅ | `./setup.sh` |
+| Codex | tools only | ❌ | ❌ | `./setup.sh` (MCP-only) |
+| Any MCP client | tools only | ❌ | ❌ | point it at `http://localhost:8800/mcp` |
+
+`./setup.sh` detects installed agents and wires each at the highest tier it
+supports; `python3 scripts/doctor.py` verifies the wiring afterwards. When
+an agent grows lifecycle hooks (or a wrapper becomes worth building), its
+tier upgrades by adding an adapter — the core doesn't change.
+
 ## The contract: 4 lifecycle moments
 
 An adapter is complete when it covers these four moments. All calls are

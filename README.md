@@ -7,10 +7,12 @@ stored locally and stays fully private.
 
 By default it needs **no API key, no Ollama, and no Python on the host**.
 
-Two agent adapters ship today: **Hermes Desktop** and **Claude Code**. Both
+Two full adapters ship today: **Hermes Desktop** and **Claude Code**. Both
 access the same memory store, so what you teach one agent, the other
-recalls. Adding a new agent only means writing a new adapter — the system's
-architecture doesn't change.
+recalls. **Codex** is wired at MCP-only tier (memory tools without
+automatic recording), and any MCP client can connect manually — see the
+[support tiers](adapters/README.md#support-tiers). Adding a new agent only
+means writing a new adapter — the system's architecture doesn't change.
 
 ## Why it exists
 

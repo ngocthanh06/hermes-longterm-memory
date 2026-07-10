@@ -145,6 +145,14 @@ else
   echo "Skipping Claude Code wiring — install it and re-run ./setup.sh."
 fi
 
+# 5c. Wire Codex, if installed (MCP-only tier: memory tools, no lifecycle hooks)
+if command -v codex >/dev/null 2>&1 || [ -d "$HOME/.codex" ]; then
+  step "Configuring Codex (MCP-only)"
+  python3 scripts/configure_codex.py
+else
+  step "Codex not found — skipping (any MCP client can connect manually: http://localhost:8800/mcp)"
+fi
+
 # 6. Verify
 step "Verifying"
 if command -v hermes >/dev/null 2>&1; then
@@ -155,4 +163,5 @@ curl -fsS http://localhost:8800/health | "$HERMES_PY" -m json.tool 2>/dev/null |
 echo
 echo "${BOLD}Done — chat in Hermes Desktop, then verify with:${RESET}"
 echo "  curl http://localhost:8800/health   # last_written_at must update after every chat turn"
+echo "  python3 scripts/doctor.py           # re-check service + every agent's wiring any time"
 echo "  http://localhost:6333/dashboard     # browse the data visually in Qdrant"

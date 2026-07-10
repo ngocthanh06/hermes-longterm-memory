@@ -56,8 +56,12 @@ Recall tuning knobs (`RECALL_MIN_SCORE`, `LONGBRAIN_MEMORY_MAX_CONTEXT`,
 ## Health checks
 
 ```bash
+python3 scripts/doctor.py    # one-shot check: service, launchd jobs, every agent's wiring
 curl localhost:8800/health
 ```
+
+`doctor.py` is read-only and skips agents that aren't installed;
+`doctor.py --fix` re-runs `./setup.sh` when problems are found.
 
 - `status` must be `ok` and the three `longbrain_*` collection counts
   non-null.
