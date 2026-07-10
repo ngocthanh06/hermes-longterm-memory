@@ -13,7 +13,24 @@
 >   from ~/.hermes/.env.
 > - ✅ **Phase B complete** — launchd backup at 2:00 AM, 7-copy retention,
 >   log at logs/backup.log (BSD head fixed with awk).
-> - ⬜ **Phase C — benchmarked, inconclusive, NOT migrating (2026-07-07).**
+> - ✅ **Phase C complete (2026-07-10) — C1 (model swap) CLOSED without migrating;
+>   C2 (hybrid BM25) SHIPPED.** C2: `app/hybrid.py` adds a named `bm25` sparse
+>   vector (fastembed `Qdrant/bm25`, IDF on the Qdrant side) to all three
+>   collections; recall fuses client-side as
+>   `max(dense_cosine, RECALL_BM25_WEIGHT * bm25_ratio)` — NOT server RRF,
+>   whose rank-scores would break every cosine-calibrated mechanism
+>   (min-score, decay, importance, boost). Query side only searches
+>   identifier-like terms (digits, snake_case, CamelCase, acronyms, quoted
+>   spans): full natural-language questions let common Vietnamese words
+>   outscore the rare token (measured 0/12 rescued on the real corpus;
+>   fastembed has no VN/JA stopwords). With the gate: exact-token hit@top-2
+>   on the real 450-chunk corpus went 1/12 (dense) -> 11/12 (hybrid), and
+>   prompts without such tokens return byte-identical dense results (eval
+>   10/10, 0 violations). Qdrant can't add a sparse vector to an existing
+>   collection, so `scripts/migrate_hybrid_bm25.py` recreated the
+>   collections carrying dense vectors over (no re-embed; gzip dump in
+>   backups/hybrid_migration_* first). Migrated + deployed 2026-07-10
+>   (365+283+450 points, 100% with sparse). Kill switch: `HYBRID_BM25=false`.
 >   `BAAI/bge-m3` (the model this section originally proposed) turned out to
 >   not exist in fastembed at all (checked 0.7.4 and 0.8.0) — substituted
 >   `intfloat/multilingual-e5-large`, the strongest multilingual model
@@ -21,8 +38,17 @@
 >   LLM-judged comparison on 15 real Vietnamese chat queries against the
 >   real `hermes_memories` corpus: candidate won 6, current (MiniLM) won 4,
 >   5 ties. Too thin a margin on too small a sample to justify a full
->   re-embed migration — staying on MiniLM. Re-run with a larger sample
->   (more queries, corpus including L4 documents too) if this comes up again.
+>   re-embed migration — staying on MiniLM.
+>   **Re-run 2026-07-10** with the larger sample that note asked for (40 real
+>   queries, corpus = 256 facts + 200 L4 chunks, e5 given its proper
+>   `query:` prefix via `get_query_embedding`): candidate 22, current 17,
+>   tie 1 — still below the 1.3× decision bar, second inconclusive result.
+>   `recall_eval.py` under `EMBED_MODEL=e5-large`: same 9/9 hits but
+>   2 violations and +63% injected chars (recall/dedup thresholds are tuned
+>   to MiniLM's cosine distribution; migrating would also mean a threshold
+>   retune pass). **C1 closed for good — MiniLM stays.** The misses that
+>   motivated Phase C (exact tokens like "10MB" not ranking) are keyword
+>   matching, which C2 hybrid BM25 addresses without touching the dense model.
 > - ✅ **Phase D complete (2026-07-07)** — `scripts/ingest_watcher.py` (stdlib-only,
 >   polls each project's `docs/` subfolder from `~/.hermes/projects.db`, one
 >   pass per invocation) + `com.hermes.memory-ingest.plist.template` (launchd,

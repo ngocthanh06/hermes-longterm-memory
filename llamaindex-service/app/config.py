@@ -92,6 +92,20 @@ DEDUP_LLM_CHECK_MIN = float(os.getenv("DEDUP_LLM_CHECK_MIN", "0.60"))
 # stay available through the explicit MCP search tools (no project given).
 RECALL_PROJECT_BOOST = float(os.getenv("RECALL_PROJECT_BOOST", "1.5"))
 
+# ---------------------------------------------------------------------------
+# Hybrid recall (C2): a BM25 sparse channel next to the dense vectors, for
+# exact tokens the dense model under-ranks (error codes, "10MB", ids).
+# Sparse can only RESCUE hits — a keyword match enters recall with
+# similarity RECALL_BM25_WEIGHT * (its BM25 score / best BM25 score of the
+# query); dense-ranked results are never demoted. Collections created before
+# the migration (scripts/migrate_hybrid_bm25.py) have no sparse schema and
+# everything silently stays dense-only.
+# ---------------------------------------------------------------------------
+HYBRID_BM25 = os.getenv("HYBRID_BM25", "true").lower() == "true"
+BM25_MODEL = os.getenv("BM25_MODEL", "Qdrant/bm25")
+BM25_VECTOR_NAME = "bm25"
+RECALL_BM25_WEIGHT = float(os.getenv("RECALL_BM25_WEIGHT", "0.6"))
+
 
 def _csv_env(name: str, default: str) -> tuple:
     return tuple(

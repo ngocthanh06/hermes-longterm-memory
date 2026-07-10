@@ -1,9 +1,9 @@
 {
  "summary": {
-  "include_hits": 9,
-  "include_expected": 9,
+  "include_hits": 10,
+  "include_expected": 10,
   "violations": 0,
-  "total_chars": 5894
+  "total_chars": 7652
  },
  "cases": [
   {
@@ -73,7 +73,7 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 596,
+   "chars": 1105,
    "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
   },
   {
@@ -85,6 +85,16 @@
    "violations": [],
    "chars": 1017,
    "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+  },
+  {
+   "name": "vn-exact-token-bm25",
+   "hits": [
+    "ERR_UPLOAD_413"
+   ],
+   "misses": [],
+   "violations": [],
+   "chars": 1249,
+   "note": "exact-token rescue qua kênh sparse — thước đo cho C2 hybrid BM25"
   },
   {
    "name": "vn-noise-rejection",

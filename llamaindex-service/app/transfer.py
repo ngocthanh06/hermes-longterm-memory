@@ -21,7 +21,7 @@ import time
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, documents, memories, memory_store, qdrant_setup
+from app import config, documents, hybrid, memories, memory_store, qdrant_setup
 
 FORMAT = "hermes-memory-export"
 VERSION = 1
@@ -206,7 +206,10 @@ def _import_facts(client: QdrantClient, embed_model, facts: list[dict]) -> dict:
             collection_name=config.MEMORIES_COLLECTION,
             points=[qmodels.PointStruct(
                 id=point_id,
-                vector=embed_model.get_text_embedding(text),
+                vector=hybrid.point_vector(
+                    client, config.MEMORIES_COLLECTION,
+                    embed_model.get_text_embedding(text), text,
+                ),
                 payload=payload,
             )],
         )
@@ -248,7 +251,10 @@ def _import_turns(client: QdrantClient, embed_model, turns: list[dict]) -> dict:
             collection_name=config.CHAT_HISTORY_COLLECTION,
             points=[qmodels.PointStruct(
                 id=point_id,
-                vector=embed_model.get_text_embedding(t["content"]),
+                vector=hybrid.point_vector(
+                    client, config.CHAT_HISTORY_COLLECTION,
+                    embed_model.get_text_embedding(t["content"]), t["content"],
+                ),
                 payload=payload,
             )],
         )

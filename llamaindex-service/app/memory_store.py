@@ -15,7 +15,7 @@ from llama_index.core.llms import ChatMessage, MessageRole
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, qdrant_setup
+from app import config, hybrid, qdrant_setup
 
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -59,7 +59,11 @@ def add_message(
         payload["source_agent"] = source_agent
     client.upsert(
         collection_name=config.CHAT_HISTORY_COLLECTION,
-        points=[qmodels.PointStruct(id=point_id, vector=vector, payload=payload)],
+        points=[qmodels.PointStruct(
+            id=point_id,
+            vector=hybrid.point_vector(client, config.CHAT_HISTORY_COLLECTION, vector, content),
+            payload=payload,
+        )],
     )
     qdrant_setup.touch_meta(client)
     return point_id
@@ -240,32 +244,37 @@ def search_history(
                 key="session_id", match=qmodels.MatchValue(value=exclude_session)
             )
         ]
-    hits = client.search(
+    fetch_k = top_k * 3 if project else top_k
+    dense_hits = client.search(
         collection_name=config.CHAT_HISTORY_COLLECTION,
         query_vector=vector,
         query_filter=flt,
-        limit=top_k * 3 if project else top_k,
+        limit=fetch_k,
         with_payload=True,
     )
+    sparse_hits = hybrid.search(
+        client, config.CHAT_HISTORY_COLLECTION, query, flt, fetch_k
+    )
     results = []
-    for h in hits:
-        hit_project = h.payload.get("project_id") or config.DEFAULT_PROJECT
-        score = h.score
+    for e in hybrid.fuse(dense_hits, sparse_hits):
+        payload = e["payload"]
+        hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
+        score = e["similarity"]
         if project and hit_project == project:
             score *= config.RECALL_PROJECT_BOOST
         results.append(
             {
-                "content": h.payload["content"],
-                "role": h.payload["role"],
-                "session_id": h.payload["session_id"],
+                "content": payload["content"],
+                "role": payload["role"],
+                "session_id": payload["session_id"],
                 "project_id": hit_project,
-                "timestamp": h.payload.get("timestamp"),
-                "source_agent": h.payload.get("source_agent") or "",
+                "timestamp": payload.get("timestamp"),
+                "source_agent": payload.get("source_agent") or "",
                 "score": score,
             }
         )
     results.sort(key=lambda r: r["score"], reverse=True)
-    return results[:top_k] if project else results
+    return results[:top_k]
 
 
 def fetch_unconsolidated(

@@ -17,7 +17,7 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, documents, memory_store
+from app import config, documents, hybrid, memory_store
 
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -179,7 +179,11 @@ def save_facts(
             payload["source_agent"] = source_agent
         client.upsert(
             collection_name=config.MEMORIES_COLLECTION,
-            points=[qmodels.PointStruct(id=point_id, vector=vector, payload=payload)],
+            points=[qmodels.PointStruct(
+                id=point_id,
+                vector=hybrid.point_vector(client, config.MEMORIES_COLLECTION, vector, text),
+                payload=payload,
+            )],
         )
         results.append(
             {"text": text, "status": "supersedes" if superseded else "new",
@@ -218,7 +222,10 @@ def save_session_summary(
         collection_name=config.MEMORIES_COLLECTION,
         points=[qmodels.PointStruct(
             id=summary_point_id(user_id, session_id),
-            vector=embed_model.get_text_embedding(text),
+            vector=hybrid.point_vector(
+                client, config.MEMORIES_COLLECTION,
+                embed_model.get_text_embedding(text), text,
+            ),
             payload=payload,
         )],
     )
@@ -299,32 +306,36 @@ def search_memories(
             ),
             qmodels.FieldCondition(key="type", match=qmodels.MatchValue(value="preference")),
         ]
-    hits = client.search(
+    dense_hits = client.search(
         collection_name=config.MEMORIES_COLLECTION,
         query_vector=vector,
         query_filter=flt,
         limit=top_k * 3,  # over-fetch, then rerank by decayed/boosted score
         with_payload=True,
     )
+    sparse_hits = hybrid.search(
+        client, config.MEMORIES_COLLECTION, query, flt, top_k * 3
+    )
     now = time.time()
     scored = []
-    for h in hits:
-        importance = h.payload.get("importance", 0.5)
-        age = max(now - (h.payload.get("created_at") or now), 0.0)
-        final = h.score * _decay(age, config.MEMORY_HALF_LIFE_DAYS) * (0.5 + 0.5 * importance)
-        hit_project = h.payload.get("project_id") or config.DEFAULT_PROJECT
+    for e in hybrid.fuse(dense_hits, sparse_hits):
+        payload = e["payload"]
+        importance = payload.get("importance", 0.5)
+        age = max(now - (payload.get("created_at") or now), 0.0)
+        final = e["similarity"] * _decay(age, config.MEMORY_HALF_LIFE_DAYS) * (0.5 + 0.5 * importance)
+        hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
         if project and hit_project == project:
             final *= config.RECALL_PROJECT_BOOST
         scored.append(
             {
-                "id": str(h.id),
-                "text": h.payload["text"],
-                "type": h.payload.get("type", "fact"),
+                "id": str(e["id"]),
+                "text": payload["text"],
+                "type": payload.get("type", "fact"),
                 "project_id": hit_project,
                 "importance": importance,
-                "created_at": h.payload.get("created_at"),
-                "source_agent": h.payload.get("source_agent") or "",
-                "similarity": h.score,
+                "created_at": payload.get("created_at"),
+                "source_agent": payload.get("source_agent") or "",
+                "similarity": e["similarity"],
                 "score": final,
             }
         )

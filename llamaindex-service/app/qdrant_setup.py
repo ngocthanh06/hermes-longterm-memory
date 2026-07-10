@@ -6,12 +6,15 @@ mismatch — mixing vector spaces silently corrupts recall, so it must be an
 explicit migration instead.
 """
 
+import logging
 import time
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from app import config
+
+logger = logging.getLogger("uvicorn")
 
 META_POINT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -35,7 +38,24 @@ def _ensure_collection(client: QdrantClient, name: str, dim: int) -> None:
             vectors_config=qmodels.VectorParams(
                 size=dim, distance=qmodels.Distance.COSINE
             ),
+            # The dense vector stays unnamed; BM25 rides along as a named
+            # sparse vector (see app/hybrid.py). Qdrant cannot add a sparse
+            # vector to an existing collection, so it must be born here —
+            # pre-existing collections need scripts/migrate_hybrid_bm25.py.
+            sparse_vectors_config=(
+                {config.BM25_VECTOR_NAME: qmodels.SparseVectorParams(
+                    modifier=qmodels.Modifier.IDF)}
+                if config.HYBRID_BM25 else None
+            ),
         )
+    elif config.HYBRID_BM25:
+        params = client.get_collection(name).config.params
+        if config.BM25_VECTOR_NAME not in (params.sparse_vectors or {}):
+            logger.warning(
+                "Collection %s has no %r sparse vector — hybrid BM25 recall is "
+                "OFF for it. Run scripts/migrate_hybrid_bm25.py to enable.",
+                name, config.BM25_VECTOR_NAME,
+            )
 
 
 def _ensure_indexes(client: QdrantClient, name: str, fields: dict[str, qmodels.PayloadSchemaType]) -> None:
@@ -104,21 +124,22 @@ def ensure_all(client: QdrantClient, embed_dim: int) -> None:
          "project_id": keyword, "created_at": ts, "superseded_by": keyword},
     )
 
-    # The documents collection is created by LlamaIndex's QdrantVectorStore on
-    # first insert; if it already exists verify its dimension and add the
-    # project index (metadata keys land directly in the Qdrant payload).
-    if config.DOCUMENTS_COLLECTION in _existing_collections(client):
-        doc_dim = _collection_vector_size(client, config.DOCUMENTS_COLLECTION)
-        if doc_dim is not None and doc_dim != embed_dim:
-            raise RuntimeError(
-                f"Collection {config.DOCUMENTS_COLLECTION!r} holds "
-                f"{doc_dim}-dim vectors but the configured embedding produces "
-                f"{embed_dim}-dim. See the embedding-migration note in README."
-            )
-        _ensure_indexes(
-            client, config.DOCUMENTS_COLLECTION,
-            {"project_id": keyword, "user_id": keyword, "stored_path": keyword},
+    # The documents collection is created here too (LlamaIndex's
+    # QdrantVectorStore would otherwise create it on first insert WITHOUT the
+    # sparse vector, permanently locking hybrid out of L4). Metadata keys
+    # land directly in the Qdrant payload, so the indexes work the same.
+    _ensure_collection(client, config.DOCUMENTS_COLLECTION, embed_dim)
+    doc_dim = _collection_vector_size(client, config.DOCUMENTS_COLLECTION)
+    if doc_dim is not None and doc_dim != embed_dim:
+        raise RuntimeError(
+            f"Collection {config.DOCUMENTS_COLLECTION!r} holds "
+            f"{doc_dim}-dim vectors but the configured embedding produces "
+            f"{embed_dim}-dim. See the embedding-migration note in README."
         )
+    _ensure_indexes(
+        client, config.DOCUMENTS_COLLECTION,
+        {"project_id": keyword, "user_id": keyword, "stored_path": keyword},
+    )
 
     if config.META_COLLECTION not in _existing_collections(client):
         client.create_collection(

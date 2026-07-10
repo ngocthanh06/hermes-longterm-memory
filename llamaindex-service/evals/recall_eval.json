@@ -19,7 +19,8 @@
     ],
     "documents": [
       {"project": "shopmed", "source": "AIインポート_エラーメッセージ仕様.md", "text": "# AI インポート エラーメッセージ仕様\n\n| 状況 | 表示メッセージ |\n|---|---|\n| ファイルサイズ超過 | ファイルサイズが上限（10MB）を超えています。ファイルを分割するか、サイズを小さくしてから、もう一度アップロードしてください。 |\n| 月間利用上限 | 今月の利用回数の上限に達しました。来月になってから、もう一度お試しください。 |\n| 非対応ファイル形式 | このファイル形式には対応していません。PDF・PowerPoint・Word 形式のファイルをアップロードしてください。 |"},
-      {"project": "bookinghub", "source": "booking-availability-spec.md", "text": "# Booking availability specification\n\nSlots are generated every slot_interval_minutes (default 15). For each slot the lock window is [slot_time, slot_time + duration]. A slot is available when people <= capacity_per_unit AND remaining_units >= 1. Approved bookings overlapping the lock window occupy units; edge-to-edge bookings do not overlap (exclusive boundary)."}
+      {"project": "bookinghub", "source": "booking-availability-spec.md", "text": "# Booking availability specification\n\nSlots are generated every slot_interval_minutes (default 15). For each slot the lock window is [slot_time, slot_time + duration]. A slot is available when people <= capacity_per_unit AND remaining_units >= 1. Approved bookings overlapping the lock window occupy units; edge-to-edge bookings do not overlap (exclusive boundary)."},
+      {"project": "shopmed", "source": "api-error-codes.md", "text": "# Quy ước phản hồi của cổng tích hợp\n\nMọi phản hồi đều là JSON. Khi thành công, trường data chứa kết quả và meta chứa thông tin phân trang. Khi thất bại, middleware trả trường error_code cùng thông điệp cho người dùng cuối. Nhóm upload gồm ERR_UPLOAD_413 (payload quá lớn), ERR_UPLOAD_415 (định dạng không hỗ trợ) và ERR_UPLOAD_422 (thiếu trường bắt buộc). Nhóm hạn mức có ERR_QUOTA_429 khi vượt hạn mức tháng. Client bắt buộc hiển thị thông điệp theo bảng dịch, không hiển thị mã thô."}
     ]
   },
   "cases": [
@@ -81,6 +82,14 @@
       "expect_include": ["capacity_per_unit"],
       "expect_exclude": [],
       "note": "cần channel docs trong recall — thước đo cho #1 (memory router); fail với pipeline hiện tại là dự kiến"
+    },
+    {
+      "name": "vn-exact-token-bm25",
+      "query": "trong tài liệu, mã ERR_UPLOAD_413 nghĩa là lỗi gì?",
+      "project": "shopmed",
+      "expect_include": ["ERR_UPLOAD_413"],
+      "expect_exclude": [],
+      "note": "exact-token rescue qua kênh sparse — thước đo cho C2 hybrid BM25"
     },
     {
       "name": "vn-noise-rejection",

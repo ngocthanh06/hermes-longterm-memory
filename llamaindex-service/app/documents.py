@@ -12,7 +12,7 @@ from llama_index.core import Document, SimpleDirectoryReader, VectorStoreIndex
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config
+from app import config, hybrid
 
 # Bookkeeping metadata must stay OUT of the text that gets embedded (and out
 # of what the LLM sees): every document shares near-identical values here
@@ -73,6 +73,46 @@ def store_original(source_path: Path, filename: str) -> Path:
     return target
 
 
+def _backfill_sparse(qdrant_client: QdrantClient, doc_ids: list[str]) -> None:
+    """LlamaIndex's insert writes only the unnamed dense vector; add the BM25
+    sparse vector to the chunks it just created. No-op when the collection
+    has no sparse schema (pre-migration) or hybrid is disabled."""
+    if not doc_ids or not hybrid.collection_enabled(qdrant_client, config.DOCUMENTS_COLLECTION):
+        return
+    import json as _json
+
+    flt = qmodels.Filter(must=[
+        qmodels.FieldCondition(key="doc_id", match=qmodels.MatchAny(any=list(doc_ids)))
+    ])
+    offset = None
+    while True:
+        points, offset = qdrant_client.scroll(
+            collection_name=config.DOCUMENTS_COLLECTION,
+            scroll_filter=flt,
+            limit=128,
+            offset=offset,
+            with_payload=["_node_content"],
+            with_vectors=False,
+        )
+        updates = []
+        for p in points:
+            try:
+                text = _json.loads((p.payload or {}).get("_node_content") or "{}").get("text", "")
+            except (ValueError, TypeError):
+                text = ""
+            sparse = hybrid.text_vector(text)
+            if sparse is not None:
+                updates.append(qmodels.PointVectors(
+                    id=p.id, vector={config.BM25_VECTOR_NAME: sparse}
+                ))
+        if updates:
+            qdrant_client.update_vectors(
+                collection_name=config.DOCUMENTS_COLLECTION, points=updates
+            )
+        if offset is None:
+            break
+
+
 def ingest_text(
     index: VectorStoreIndex,
     qdrant_client: QdrantClient,
@@ -90,6 +130,7 @@ def ingest_text(
     )
     _hide_admin_metadata(document)
     index.insert(document)
+    _backfill_sparse(qdrant_client, [document.doc_id])
     return point_count(qdrant_client)
 
 
@@ -111,6 +152,7 @@ def ingest_file(
         )
         _hide_admin_metadata(document)
         index.insert(document)
+    _backfill_sparse(qdrant_client, [d.doc_id for d in documents])
     return point_count(qdrant_client)
 
 
@@ -134,20 +176,27 @@ def search_chunks(
         must.append(
             qmodels.FieldCondition(key="project_id", match=qmodels.MatchValue(value=project))
         )
+    flt = qmodels.Filter(must=must) if must else None
     try:
-        hits = client.search(
+        dense_hits = client.search(
             collection_name=config.DOCUMENTS_COLLECTION,
             query_vector=vector,
-            query_filter=qmodels.Filter(must=must) if must else None,
+            query_filter=flt,
             limit=top_k,
             score_threshold=min_score,
             with_payload=["_node_content", "source", "project_id"],
         )
     except Exception:
         return []  # collection missing/empty — recall stays best-effort
+    sparse_hits = hybrid.search(
+        client, config.DOCUMENTS_COLLECTION, query, flt, top_k,
+        with_payload=["_node_content", "source", "project_id"],
+    )
     results = []
-    for h in hits:
-        raw = (h.payload or {}).get("_node_content")
+    for e in hybrid.fuse(dense_hits, sparse_hits):
+        if e["similarity"] < min_score:
+            continue  # sparse candidates skip the server-side threshold
+        raw = e["payload"].get("_node_content")
         if not raw:
             continue
         try:
@@ -155,9 +204,9 @@ def search_chunks(
         except (ValueError, TypeError):
             continue
         results.append({
-            "source": (h.payload or {}).get("source") or "",
-            "project_id": (h.payload or {}).get("project_id") or "",
+            "source": e["payload"].get("source") or "",
+            "project_id": e["payload"].get("project_id") or "",
             "text": text,
-            "score": h.score,
+            "score": e["similarity"],
         })
-    return results
+    return results[:top_k]

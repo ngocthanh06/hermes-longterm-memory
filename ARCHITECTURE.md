@@ -122,16 +122,34 @@ sequenceDiagram
     participant Qdrant
 
     Caller->>Engine: {query, session_id?, project?}
-    Engine->>Qdrant: search hermes_memories (L3, filter out superseded)<br/>score = similarity × 0.5^(age/90d) × (0.5+0.5×importance)
-    Engine->>Qdrant: search hermes_chat_history (L2, other sessions)<br/>score = similarity × 0.5^(age/30d)
+    Engine->>Qdrant: search hermes_memories (L3, filter out superseded)<br/>similarity = max(dense cosine, 0.6 × BM25 ratio)<br/>score = similarity × 0.5^(age/90d) × (0.5+0.5×importance)
+    Engine->>Qdrant: search hermes_chat_history (L2, other sessions)<br/>similarity = max(dense cosine, 0.6 × BM25 ratio)<br/>score = similarity × 0.5^(age/30d)
     Engine->>Engine: L1 — N most recent turns of the current session
     Engine-->>Caller: context_block:<br/>[Long-term memories] … [Related past conversations] … [Most recent turns] …
 ```
 
+**Hybrid exact-token channel** (`app/hybrid.py`): every collection carries a
+named sparse vector `bm25` (fastembed `Qdrant/bm25`; Qdrant applies IDF via
+`Modifier.IDF`) next to the unnamed dense vector. The query side only
+searches identifier-like terms (tokens with digits, snake_case, CamelCase,
+acronyms, dotted.paths, quoted spans) — feeding the full natural-language
+question in lets common Vietnamese words outscore the one rare token
+(measured: 0/12 rescued), since fastembed has no vi/ja stopwords. Fusion is
+client-side `max(dense_cosine, RECALL_BM25_WEIGHT × bm25_ratio)` rather
+than server RRF, whose rank-based scores would break every
+cosine-calibrated mechanism above (min-score, decay, importance, boost). A
+prompt with no identifier-like token skips the channel entirely, so
+ordinary recalls are byte-identical to dense-only. Data predating the
+sparse schema needs `scripts/migrate_hybrid_bm25.py` (Qdrant cannot add a
+sparse vector to an existing collection); until then everything degrades
+to dense-only. Kill switch: `HYBRID_BM25=false`.
+
 ## 4. Qdrant schema
 
 All vector collections use Cosine distance; dimension follows the embedding
-model (default 384 — `paraphrase-multilingual-MiniLM-L12-v2`).
+model (default 384 — `paraphrase-multilingual-MiniLM-L12-v2`). Each data
+collection additionally carries a named sparse vector `bm25` (IDF modifier)
+for the hybrid exact-token channel (§3c); the dense vector stays unnamed.
 
 ### `hermes_chat_history` (L2)
 ```jsonc
@@ -359,7 +377,8 @@ hermes-agent/
 │   ├── configure_claude.py      # auto-wire Claude Code (settings.json hooks + MCP registration)
 │   ├── backup.sh                # Qdrant snapshots (nightly via launchd)
 │   ├── ingest_watcher.py        # auto-ingest each project's docs/ folder (60s poll via launchd)
-│   └── memory_transfer.sh       # text-level export/import for device migration (§12)
+│   ├── memory_transfer.sh       # text-level export/import for device migration (§12)
+│   └── migrate_hybrid_bm25.py   # one-time: recreate collections with the bm25 sparse vector (§3c)
 ├── logs/
 │   ├── hook-debug.jsonl         # raw payload of every Hermes hook run (diagnostics)
 │   └── claude-hook-debug.jsonl  # same, for the Claude Code adapter
@@ -375,6 +394,7 @@ hermes-agent/
         ├── qdrant_setup.py      # auto-init collections/indexes + schema guard
         ├── memory_store.py      # L2: write/read/search conversations (deterministic IDs, stickiness)
         ├── memories.py          # L3: save_facts (dedup/supersede) + recall + decay + graph data
+        ├── hybrid.py            # BM25 sparse channel: exact-token gate + dense-anchored fusion (§3c)
         ├── consolidation.py     # L2→L3 distillation (prompt + parsing + handouts)
         ├── documents.py         # L4: document ingest + original file retention
         ├── transfer.py          # text-level export/import bundle (§12)

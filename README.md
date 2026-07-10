@@ -71,6 +71,14 @@ three sources into one context block that gets injected into the prompt
 - **L2** — related past conversations from *other* sessions (semantic search over `hermes_chat_history`)
 - **L1** — the current session's own recent turns
 
+Search is **hybrid**: dense semantic cosine plus a BM25 keyword channel
+that only fires when the question contains identifier-like tokens
+(`ERR_UPLOAD_413`, `10MB`, `snake_case`, quoted strings, …) and can only
+*rescue* exact matches the semantic model under-ranks — it never demotes a
+semantic hit. Measured on the real document corpus, exact-token hits in
+top-2 went from 1/12 to 11/12; prompts without such tokens return
+byte-identical results. Kill switch: `HYBRID_BM25=false`.
+
 Two things keep this cheap instead of turning into another growing
 `CLAUDE.md`:
 
