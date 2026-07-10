@@ -551,7 +551,14 @@ def graph_data(
 
     edges: list[dict] = []
     if len(points) > 1:
-        vectors = np.array([p.vector for p in points], dtype=np.float32)
+        # Since the BM25 migration the collection carries named vectors, so
+        # p.vector comes back as {"": dense, "bm25": sparse}; un-migrated
+        # points still return the bare dense list.
+        vectors = np.array(
+            [p.vector.get("") if isinstance(p.vector, dict) else p.vector
+             for p in points],
+            dtype=np.float32,
+        )
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         sims = (vectors / norms) @ (vectors / norms).T
