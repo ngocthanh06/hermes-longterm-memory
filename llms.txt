@@ -1,0 +1,17 @@
+# Longbrain
+
+> Local-first long-term memory for AI agents (LlamaIndex + Qdrant). One
+> Docker stack per user; multiple agents (Hermes Desktop, Claude Code,
+> Codex) share the same memory via REST + MCP. Automatic lifecycle:
+> record -> recall -> consolidate -> controlled forgetting -> backup.
+> Single-machine, fully private, no API key required by default.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/README.md): pitch, install (3 steps), verified eval numbers, known limitations
+- [User Guide](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/docs/USER_GUIDE.md): how memory works, /ui browser, fixing/forgetting memories, docs/ auto-ingest, backup, export/import
+- [API Reference](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/docs/API.md): every REST endpoint and MCP tool with sample requests/responses
+- [Architecture](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/docs/ARCHITECTURE.md): four memory layers, data flows, Qdrant schema, multi-agent provenance
+- [Operations](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/docs/OPERATIONS.md): setup internals, .env config, health checks, backup restore, troubleshooting
+- [Roadmap](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/docs/ROADMAP.md): completed milestones, what's next, deliberate non-goals
+- [Writing an adapter](https://raw.githubusercontent.com/ngocthanh06/longbrain/main/adapters/README.md): the 4-lifecycle-moment contract and agent support tiers

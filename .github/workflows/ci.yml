@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: llamaindex-service/requirements.txt
+
+      - name: Cache embedding models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache
+          key: fastembed-${{ hashFiles('llamaindex-service/requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r llamaindex-service/requirements.txt
+          pip install "pytest>=8,<9"
+
+      - name: Unit & integration tests
+        working-directory: llamaindex-service
+        run: python -m pytest tests -q
+
+      # Recall quality is a hard gate, not a suggestion: the eval seeds a
+      # throwaway in-memory Qdrant with the committed corpus, runs the real
+      # recall pipeline (real embedding model) and fails on any regression
+      # against the committed baseline.
+      - name: Recall regression eval
+        run: python scripts/recall_eval.py

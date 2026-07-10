@@ -36,10 +36,34 @@ means writing a new adapter — the system's architecture doesn't change.
   entries instead of guessing what the AI thinks it knows. Everything stays
   on your machine, with nightly backups.
 
-Worth considering: it needs Docker (1–2 background containers), one
-`./setup.sh` run, and the distillation quality depends on the model doing
-it. It is **personal, single-machine** memory by design — no sync, no
-multi-user (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+## Verified by evals, not claims
+
+- **124 tests** (pytest, run in-container) — idempotency, dedup/supersede,
+  recall filtering, hook payload parsing, adapter config patching.
+- **Recall regression eval**: 11/11 expected hits, **0 violations** (no
+  irrelevant memory leaked into the context), ~11k chars injected across
+  the whole eval set — gated against a committed baseline
+  (`scripts/recall_eval.py`).
+- **Hybrid BM25 measured on a real 450-chunk corpus**: exact-token hit@top-2
+  went 1/12 (dense-only) → **11/12**; prompts without identifier-like tokens
+  return byte-identical results.
+
+## Known limitations (read before installing)
+
+- **Docker required** — 1–2 background containers running permanently.
+- **macOS-first**: launchd jobs (backup, docs watcher) and the agent wiring
+  are built and tested on macOS. The service itself is plain Docker, but
+  Linux agent wiring is untested.
+- **Personal, single-machine by design** — no sync, no multi-user, no
+  realtime multi-device (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+- **Codex tier**: turns are recorded automatically, but recall is
+  tools-only — Codex has no pre-prompt injection hook yet.
+- **Distillation quality depends on the configured LLM** — a weak local
+  model extracts facts less reliably; `LLM_PROVIDER=none` delegates
+  distillation to the agent's own model via MCP.
+- Status: **beta / public preview** — solid for developers who understand
+  Docker and want local agent memory; not yet "install-and-trust" for
+  everyone.
 
 ## Architecture at a glance
 

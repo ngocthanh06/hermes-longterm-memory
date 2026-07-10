@@ -33,6 +33,10 @@ python3 scripts/recall_eval.py
 The project philosophy is **measure first, optimize later**: a change that
 claims to improve recall must come with numbers from `recall_eval.py`.
 
+Both run automatically on every PR (GitHub Actions,
+`.github/workflows/ci.yml`) — the recall eval is a required gate, so a PR
+that regresses recall against the committed baseline fails CI.
+
 ## What we're looking for
 
 - **New agent adapters** — the highest-impact contribution. Start from
