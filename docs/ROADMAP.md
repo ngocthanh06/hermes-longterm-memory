@@ -18,19 +18,13 @@ preserved in git history (`UPGRADE_PLAN.md`, removed 2026-07-10).
 | 2026-07-11 | **Codex lifecycle adapter**: official `SessionStart`, `UserPromptSubmit`, and `Stop` hooks add automatic recall injection, turn recording, and consolidation catch-up; rollout-scanning `notify` retained as a compatibility fallback. |
 | 2026-07-11 | **KG-lite — triple-based supersession + entity graph**: facts may carry a `(subject, relation, object)` triple; a new fact sharing subject+relation with an active one retires it, catching plain contradictions (pnpm → bun) that cosine similarity and the LLM dedup band both miss. Kill switch `TRIPLE_SUPERSEDE=false`. Adds `/memory/graph?mode=entities` + an Entities view in `/ui`, and `scripts/backfill_triples.py` (dry-run writes a plan file; `--apply` writes exactly that plan, zero new LLM calls). |
 | 2026-07-10 | **Agent support tiers + doctor**: formal tier model (full adapter / write adapter / MCP-only / generic MCP) documented in `adapters/README.md`; Codex wired with MCP + turn-ended notify recording (`scripts/configure_codex.py`, `hooks/codex/turn_ended.py`, detected by setup.sh); `scripts/doctor.py` — one-shot read-only wiring + health check across service, launchd jobs and all agents, with `--fix` re-running setup. |
+| 2026-07-11 | **Memory quality-of-life batch**: `last_seen` refreshes a fact's decay clock on recall (`LAST_SEEN_REFRESH`); task-type facts get an open/done `status` (`HIDE_DONE_TASKS`); a contradiction detector flags conflicting facts via `conflicts_with` instead of silently keeping both (`CONTRADICTION_DETECTION`); a memory health dashboard (`GET /memory/stats` + `/ui` panel: counts, superseded ratio, 24h/7d growth, consolidation backlog); `/ui` graph gets topic sub-clustering via connected-components over existing similarity data (`GRAPH_TOPIC_CLUSTERING`, zero new LLM calls). |
+| 2026-07-11 | **KG-lite follow-up audit**: closed the 2 open items from the original KG analysis — added a genuine multi-hop eval case (`vn-multihop-project-deploy`, confirmed failing on purpose — the entity graph is `/ui`-visualization-only, not wired into recall) and deleted the 2 specific meta-about-system facts the earlier data audit had flagged but never removed. Separately, root-caused and fixed Codex Desktop's per-chat scratch cwd (`~/Documents/Codex/<date>/<title-slug>`) being persisted as a junk project — `resolve_project` now recognizes and skips that layout. |
 
 ## Next (in order)
 
-1. **`last_seen` for facts** — recalling a fact should refresh it against
-   time decay, so long-standing truths don't fade just because they're old.
-2. **Memory health dashboard in `/ui`** — counts, growth, consolidation
-   backlog, superseded ratio: is the memory healthy at a glance.
-3. **`status` field for tasks** — task-type memories should be closable
-   (open/done) instead of deleted or superseded.
-4. **Contradiction detector** — flag when a new fact conflicts with a stored
-   one instead of silently keeping both (needs an LLM on the save path).
-5. **Graph semantic layers** — group the `/ui` galaxy by topic within a
-   project, not only by similarity edges.
+Nothing queued — the previous "Next" batch (items 1-5 above) shipped this
+session. Candidates below are unprioritized; pick one or say what's next.
 
 ## Further out
 
