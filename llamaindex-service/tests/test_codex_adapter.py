@@ -88,6 +88,43 @@ def test_extract_completed_turns_keeps_html_like_prompt(tmp_path):
     )
 
 
+def test_extract_completed_turns_skips_guardian_subagent_rollout(tmp_path):
+    # Codex's internal safety risk-assessment threads (thread_source
+    # "subagent", source.subagent.other "guardian") are synthetic
+    # "approval assessment" prompts answered with a risk_level/outcome JSON
+    # blob — not real user conversation. Must not be recorded as history.
+    rollout = _write_rollout(tmp_path / "rollout.jsonl", [
+        {"type": "session_meta", "payload": {
+            "session_id": "session123", "cwd": str(tmp_path),
+            "thread_source": "subagent", "source": {"subagent": {"other": "guardian"}},
+        }},
+        _msg("user", "The following is the Codex agent history added since your "
+                      "last approval assessment. Continue the same review...", "t1"),
+        _msg("assistant", '{"risk_level":"medium","user_authorization":"high","outcome":"allow"}',
+             "t1", phase="final_answer"),
+    ])
+
+    assert turn_ended.extract_completed_turns(rollout) == []
+
+
+def test_extract_completed_turns_keeps_real_user_thread(tmp_path):
+    rollout = _write_rollout(tmp_path / "rollout.jsonl", [
+        {"type": "session_meta", "payload": {
+            "session_id": "session123", "cwd": str(tmp_path), "thread_source": "user",
+        }},
+        _msg("user", "real prompt", "t1"),
+        _msg("assistant", "final answer", "t1", phase="final_answer"),
+    ])
+
+    assert turn_ended.extract_completed_turns(rollout) == [{
+        "session_id": "session123",
+        "turn_id": "t1",
+        "cwd": str(tmp_path),
+        "user_message": "real prompt",
+        "assistant_response": "final answer",
+    }]
+
+
 def _patch_target(monkeypatch, path):
     monkeypatch.setattr(configure_codex, "CONFIG", path)
     monkeypatch.setattr(configure_codex, "HOOK_SCRIPT", Path("/repo/hooks/codex/turn_ended.py"))
