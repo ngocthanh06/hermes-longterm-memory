@@ -185,7 +185,7 @@ def check_codex() -> None:
         try:
             state = json.loads(lifecycle_state.read_text())
         except FileNotFoundError:
-            skip("lifecycle hooks not observed yet (restart Codex, trust them with /hooks)")
+            skip("Codex lifecycle hooks not observed yet — restart Codex, run /hooks, and trust Longbrain hooks")
         except (OSError, json.JSONDecodeError):
             bad(f"Codex lifecycle state is unreadable: {lifecycle_state}")
         else:
@@ -201,6 +201,12 @@ def check_codex() -> None:
                 bad(f"Codex write hook failed: {state.get('last_write_error') or 'unknown error'}")
             else:
                 skip("Codex write hook has not completed a turn yet")
+
+    agents_text = configure_codex.GLOBAL_AGENTS.read_text() if configure_codex.GLOBAL_AGENTS.exists() else ""
+    if configure_codex.AGENTS_MARKER_START in agents_text:
+        ok(f"Longbrain fallback instruction present in {configure_codex.GLOBAL_AGENTS}")
+    else:
+        bad(f"Longbrain fallback instruction missing from {configure_codex.GLOBAL_AGENTS} — re-run ./setup.sh")
 
     if str(configure_codex.HOOK_SCRIPT) in text and "notify" in text:
         ok("turn-ended notify fallback registered")
