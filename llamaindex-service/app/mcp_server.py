@@ -6,7 +6,7 @@ http://localhost:8800/mcp and needs no Python environment on the host.
 
 from pydantic import BaseModel, Field
 
-from app import config, consolidation, documents, memories, memory_store
+from app import config, consolidation, documents, memories, memory_store, scope_policy
 from app.runtime import state
 
 try:
@@ -33,18 +33,22 @@ mcp = FastMCP("longbrain", stateless_http=True) if FastMCP else None
 
 def _register_tools() -> None:
     @mcp.tool()
-    def memory_recall(query: str, session_id: str = "", project: str = "") -> str:
+    def memory_recall(
+        query: str, session_id: str = "", project: str = "",
+        project_scope: scope_policy.ProjectScope = "strict",
+    ) -> str:
         """Recall long-term memory relevant to a query: distilled facts, related
         past conversations and (if session_id given) the current session's
         recent turns. Call this at the start of a task or when the user refers
         to something from before. Returns a ready-to-inject context block.
 
-        project: optional Hermes project slug — same-project memories are
-        boosted. Leave empty to auto-detect from the session, or call
-        list_projects to see available slugs."""
+        project: optional Hermes project slug. project_scope defaults to
+        strict (only this project plus global/default memories); boost allows
+        cross-project results while preferring this project; global searches
+        all projects. Leave project empty to auto-detect from the session."""
         result = memories.recall(
             state["qdrant_client"], state["embed_model"], query,
-            session_id=session_id, project=project,
+            session_id=session_id, project=project, project_scope=project_scope,
         )
         return result["context_block"] or "No relevant long-term memory found."
 
@@ -145,12 +149,16 @@ def _register_tools() -> None:
         )
 
     @mcp.tool()
-    def search_history(query: str, top_k: int = 5, project: str = "") -> str:
+    def search_history(
+        query: str, top_k: int = 5, project: str = "",
+        project_scope: scope_policy.ProjectScope = "strict",
+    ) -> str:
         """Semantically search all past conversation turns across every session.
-        Optional project slug boosts same-project results."""
+        Optional project slug is strict by default. Use project_scope=boost
+        for cross-project pattern search, or global to search everything."""
         hits = memory_store.search_history(
             state["qdrant_client"], state["embed_model"], query, top_k=top_k,
-            project=project or None,
+            project=project or None, project_scope=project_scope,
         )
         if not hits:
             return "No matching past conversations."

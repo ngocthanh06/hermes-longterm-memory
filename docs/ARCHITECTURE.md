@@ -478,10 +478,12 @@ overrides stickiness; ambient signals (sidebar selection) never do.
   session's own stored messages (nobody has to declare it). For a brand-new
   session with no messages yet, pass `project` explicitly (an agent's model
   can call `list_projects` to discover slugs).
-- **Soft boost instead of a hard filter** for memories/conversations:
-  same-project scores × `RECALL_PROJECT_BOOST` (default 1.5). Memories from
-  other projects can still surface when genuinely relevant — exactly the value
-  of cross-project memory.
+- **Strict project scope by default** for memories/conversations: only the
+  current project plus legacy `default` (global) records can surface. A type
+  such as `preference` does not implicitly make a project record global.
+  Explicit `project_scope=boost` enables cross-project retrieval while ranking
+  same-project scores × `RECALL_PROJECT_BOOST` (default 1.5), and `global`
+  searches everything without applying that boost.
 - **Documents (L4) are hard-filtered** when a project is specified — project A's
   documents answering project B's questions is usually noise.
 

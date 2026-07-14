@@ -15,7 +15,7 @@ from llama_index.core.llms import ChatMessage, MessageRole
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, hybrid, qdrant_setup
+from app import config, hybrid, qdrant_setup, scope_policy
 
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -223,20 +223,24 @@ def search_history(
     exclude_session: str | None = None,
     top_k: int = config.RECALL_TOP_K_HISTORY,
     project: str | None = None,
+    project_scope: str = "strict",
 ) -> list[dict]:
     """Semantic search over all past turns (the vectors have been there all
-    along — this is what makes old conversations recallable). When a project
-    is given, same-project hits get a soft score boost."""
+    along — this is what makes old conversations recallable). Project scope
+    follows memory recall: strict (project + default), boost, or global."""
+    allowed_projects = scope_policy.filter_projects(
+        project, project_scope, config.DEFAULT_PROJECT
+    )
     vector = embed_model.get_text_embedding(query)
     flt = _user_filter(user_id)
-    if project:
+    if allowed_projects:
         # Same scoping rule as fact recall: another project's conversations
         # stay out of auto-recall (default-project sessions still pass).
         # Cross-project history remains reachable by searching without a
         # project through the MCP tools.
         flt.must.append(qmodels.FieldCondition(
             key="project_id",
-            match=qmodels.MatchAny(any=[project, config.DEFAULT_PROJECT]),
+            match=qmodels.MatchAny(any=allowed_projects),
         ))
     if exclude_session:
         flt.must_not = [
@@ -260,7 +264,7 @@ def search_history(
         payload = e["payload"]
         hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
         score = e["similarity"]
-        if project and hit_project == project:
+        if scope_policy.boost_same_project(project, hit_project, project_scope):
             score *= config.RECALL_PROJECT_BOOST
         results.append(
             {

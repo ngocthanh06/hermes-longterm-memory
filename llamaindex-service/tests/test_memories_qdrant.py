@@ -308,9 +308,23 @@ def test_triple_not_superseded_across_plain_projects(client):
     assert r[0]["status"] == "new"
 
 
-def test_triple_preference_superseded_globally(client):
-    # Preferences are global in recall, so a stale one must be reachable
-    # from any project.
+def test_triple_preference_not_superseded_across_projects(client):
+    embed = FakeEmbed({"Hermes likes galaxy UI": _unit(0),
+                       "Thaloca likes practical UI": _unit(60)})
+    memories.save_facts(client, embed, [{
+        "text": "Hermes likes galaxy UI", "type": "preference",
+        "subject": "project.ui", "relation": "visual_theme", "object": "galaxy",
+    }], project_id="hermes")
+    r = memories.save_facts(client, embed, [{
+        "text": "Thaloca likes practical UI", "type": "preference",
+        "subject": "project.ui", "relation": "visual_theme", "object": "practical",
+    }], project_id="thaloca")
+    assert r[0]["status"] == "new"
+
+
+def test_triple_default_preference_superseded_from_project(client):
+    # A genuinely global preference is stored under default. A project turn
+    # can update it, while another project's preference remains isolated.
     embed = FakeEmbed({
         "Comments in Vietnamese": _unit(0),
         "Comments in English from now on": _unit(60),
@@ -318,7 +332,7 @@ def test_triple_preference_superseded_globally(client):
     memories.save_facts(client, embed, [
         {"text": "Comments in Vietnamese", "type": "preference",
          "subject": "user", "relation": "comment_language", "object": "vi"},
-    ], project_id="beta")
+    ], project_id=config.DEFAULT_PROJECT)
     r = memories.save_facts(client, embed, [
         {"text": "Comments in English from now on", "type": "preference",
          "subject": "user", "relation": "comment_language", "object": "en"},
@@ -1070,8 +1084,7 @@ def test_summaries_excluded_from_fact_search_and_listing(client):
 
 
 # ---------------------------------------------------------------------------
-# global vs project scope: other projects' facts/history stay out of
-# auto-recall; preferences and default-project knowledge are global
+# project scope: strict is safe by default; cross-project recall is explicit
 # ---------------------------------------------------------------------------
 def test_project_query_excludes_other_projects_facts(client):
     embed = FakeEmbed()
@@ -1081,7 +1094,7 @@ def test_project_query_excludes_other_projects_facts(client):
     assert hits == []  # hard-scoped out, no longer just down-ranked
 
 
-def test_preferences_and_default_project_are_global(client):
+def test_strict_scope_does_not_assume_cross_project_preference_is_global(client):
     embed = FakeEmbed()
     memories.save_facts(client, embed,
                         [{"text": "commit without extra trailers", "type": "preference"}],
@@ -1089,8 +1102,26 @@ def test_preferences_and_default_project_are_global(client):
     memories.save_facts(client, embed, [{"text": "user timezone is UTC+7"}])  # default project
     texts = [h["text"] for h in
              memories.search_memories(client, embed, "anything", project="proj-a", top_k=10)]
-    assert "commit without extra trailers" in texts
+    assert "commit without extra trailers" not in texts
     assert "user timezone is UTC+7" in texts
+
+
+def test_boost_scope_allows_cross_project_results(client):
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "Hermes uses a galaxy UI"}],
+                        project_id="hermes")
+    texts = [h["text"] for h in memories.search_memories(
+        client, embed, "galaxy UI", project="thaloca", project_scope="boost")]
+    assert "Hermes uses a galaxy UI" in texts
+
+
+def test_global_scope_does_not_apply_project_boost(client, monkeypatch):
+    embed = FakeEmbed()
+    monkeypatch.setattr(config, "RECALL_PROJECT_BOOST", 10.0)
+    memories.save_facts(client, embed, [{"text": "same project"}], project_id="proj-a")
+    hit = memories.search_memories(
+        client, embed, "anything", project="proj-a", project_scope="global")[0]
+    assert hit["score"] <= hit["similarity"]
 
 
 def test_history_scoped_to_project_plus_default(client):
@@ -1110,3 +1141,16 @@ def test_no_project_means_no_scoping(client):
     memories.save_facts(client, embed, [{"text": "proj-b only fact"}], project_id="proj-b")
     texts = [h["text"] for h in memories.search_memories(client, embed, "fact?", top_k=10)]
     assert "proj-b only fact" in texts
+
+
+@pytest.mark.parametrize("bad_scope", ["", "STRICT", "strcit", "other"])
+def test_invalid_project_scope_fails_closed_for_facts_and_history(client, bad_scope):
+    embed = FakeEmbed()
+    with pytest.raises(ValueError, match="invalid project_scope"):
+        memories.search_memories(
+            client, embed, "anything", project="proj-a", project_scope=bad_scope
+        )
+    with pytest.raises(ValueError, match="invalid project_scope"):
+        memory_store.search_history(
+            client, embed, "anything", project="proj-a", project_scope=bad_scope
+        )
