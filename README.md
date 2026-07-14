@@ -36,6 +36,14 @@ means writing a new adapter — the system's architecture doesn't change.
   entries instead of guessing what the AI thinks it knows. Everything stays
   on your machine, with nightly backups.
 
+### Memory Atlas
+
+![Longbrain Memory Atlas showing color-coded project galaxies](docs/assets/memory-atlas.jpg)
+
+Each project is a movable, color-coded galaxy. Memories form stable rings
+around their project hub, while filters, adjustable spacing and wide-range
+zoom keep large collections readable.
+
 ## Verified by evals, not claims
 
 - **124 tests** (pytest, run in-container) — idempotency, dedup/supersede,

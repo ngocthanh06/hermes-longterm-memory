@@ -33,11 +33,31 @@ CODEX_HOME = Path(os.environ.get("CODEX_HOME", "")) if os.environ.get("CODEX_HOM
     else Path.home() / ".codex"
 CONFIG = CODEX_HOME / "config.toml"
 HOOKS_CONFIG = CODEX_HOME / "hooks.json"
+GLOBAL_AGENTS = CODEX_HOME / "AGENTS.md"
 SECTION = "[mcp_servers.longbrain]"
 MCP_URL = "http://localhost:8800/mcp"
 URL_LINE = f'url = "{MCP_URL}"'
 HOOK_SCRIPT = REPO / "hooks" / "codex" / "turn_ended.py"
 NOTIFY_MARKER = "Longbrain Codex notify"
+AGENTS_MARKER_START = "<!-- longbrain:codex-memory-priority:start (managed by setup.sh) -->"
+AGENTS_MARKER_END = "<!-- longbrain:codex-memory-priority:end -->"
+AGENTS_BLOCK = f"""{AGENTS_MARKER_START}
+## Longbrain Memory
+
+Before answering any non-trivial project question, check Longbrain first.
+Use the automatically injected "Long-term memory (auto-recalled)" context
+when it is present. If it is missing or too thin, call the Longbrain MCP
+tool `memory_recall` (shown as `mcp__longbrain.memory_recall` or
+`mcp__longbrain__memory_recall`, depending on the Codex surface) before
+doing substantive analysis. If the Longbrain MCP tools are not visible,
+use tool discovery/search for "longbrain memory_recall" and then call it.
+
+For questions about previous discussions, reviews, decisions, project
+history, specs, docs, or "what we did before", recall/search Longbrain
+before saying context is missing or reconstructing from files. Treat
+Longbrain as the shared long-term project memory across Codex, Claude Code,
+Hermes Desktop, and future adapters.
+{AGENTS_MARKER_END}"""
 LIFECYCLE_HOOKS = {
     "SessionStart": {
         "script": REPO / "hooks" / "codex" / "session_start.py",
@@ -156,8 +176,43 @@ def _unwrap_codex_notify(values: list[str]) -> list[str]:
     return chained if isinstance(chained, list) else []
 
 
+def _without_longbrain_previous_notify(values: list[str]) -> list[str]:
+    """Remove old nested Longbrain wrappers from another notifier.
+
+    Some Codex Desktop builds wrap notify themselves (for example Computer
+    Use's `--previous-notify`). If our previous installer was already nested
+    there, installing Longbrain as the top-level notifier would otherwise run
+    Longbrain twice. Keep the outer notifier, but strip its stale Longbrain
+    previous-notify pointer.
+    """
+    cleaned = list(values)
+    idx = 0
+    while idx < len(cleaned) - 1:
+        if cleaned[idx] not in {"--previous-notify", "--chain-json"}:
+            idx += 1
+            continue
+        try:
+            nested = json.loads(cleaned[idx + 1])
+        except json.JSONDecodeError:
+            idx += 2
+            continue
+        if not isinstance(nested, list):
+            idx += 2
+            continue
+        if len(nested) >= 2 and _is_codex_hook_path(str(nested[1])):
+            original = _unwrap_codex_notify([str(v) for v in nested])
+            base = cleaned[:idx]
+            if not original or original == base:
+                del cleaned[idx:idx + 2]
+                continue
+            cleaned[idx + 1] = json.dumps(original)
+        idx += 2
+    return cleaned
+
+
 def _notify_command(existing: list[str]) -> list[str]:
     existing = _unwrap_codex_notify(existing)
+    existing = _without_longbrain_previous_notify(existing)
     command = ["python3", str(HOOK_SCRIPT)]
     if existing and not _is_our_notify(existing):
         command.extend(["--chain-json", json.dumps(existing)])
@@ -184,6 +239,14 @@ def _patch_notify(lines: list[str]) -> tuple[list[str], bool]:
         fail("top-level notify must be an array of strings; config left unchanged")
         return lines, False
     if _is_our_notify(existing):
+        cleaned = _notify_command(existing)
+        if cleaned != existing:
+            new_lines = list(lines)
+            new_lines[notify_idx:notify_end + 1] = [
+                "notify = " + _toml_array(cleaned)
+            ]
+            note("cleaned nested Longbrain notify wrapper")
+            return new_lines, True
         note("Codex notify hook already registered")
         return lines, False
 
@@ -279,6 +342,34 @@ def register_lifecycle_hooks() -> None:
     note("hooks.json written (review/trust Longbrain hooks with /hooks in Codex)")
 
 
+def patch_global_agents() -> None:
+    """Install a model-visible fallback instruction.
+
+    Lifecycle hooks are the real pre-model path. Codex still requires the user
+    to review/trust hooks once via /hooks, so this global AGENTS.md block keeps
+    the model behavior correct even before that trust step has happened.
+    """
+    print(f"==> {GLOBAL_AGENTS} (Longbrain recall fallback)")
+    text = GLOBAL_AGENTS.read_text() if GLOBAL_AGENTS.exists() else ""
+    if AGENTS_MARKER_START in text and AGENTS_MARKER_END in text:
+        start = text.index(AGENTS_MARKER_START)
+        end = text.index(AGENTS_MARKER_END) + len(AGENTS_MARKER_END)
+        new_text = text[:start] + AGENTS_BLOCK + text[end:]
+        if new_text == text:
+            note("Longbrain AGENTS.md block already present")
+            return
+        text = new_text
+        note("updated Longbrain AGENTS.md block")
+    else:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + AGENTS_BLOCK + "\n"
+        note("added Longbrain AGENTS.md block")
+    GLOBAL_AGENTS.parent.mkdir(parents=True, exist_ok=True)
+    if GLOBAL_AGENTS.exists():
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        shutil.copyfile(GLOBAL_AGENTS, GLOBAL_AGENTS.with_name(f"AGENTS.md.bak.{stamp}"))
+    GLOBAL_AGENTS.write_text(text)
+
+
 def register_mcp() -> None:
     print(f"==> {CONFIG} (Codex wiring)")
     lines = CONFIG.read_text().splitlines() if CONFIG.exists() else []
@@ -338,6 +429,7 @@ def main() -> int:
         return 0
     register_mcp()
     register_lifecycle_hooks()
+    patch_global_agents()
     if ok_all:
         print("✓ Codex wired (lifecycle hooks + MCP + notify fallback).")
         print("  Restart Codex, run /hooks once to trust the Longbrain hooks, then "

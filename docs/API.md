@@ -346,16 +346,17 @@ curl.
 ## MCP tools
 
 Registered at `http://localhost:8800/mcp` (Streamable HTTP). All tools
-return plain text designed to be read by the model. `project` is always an
-optional project slug that scopes/boosts the search.
+return plain text designed to be read by the model. `project` is optional;
+project-aware recall is strict unless `project_scope=boost` or `global` is
+requested explicitly.
 
 ### Recall & record
 
 | Tool | Use it when |
 |---|---|
-| `memory_recall(query, session_id?, project?)` | Starting a task, or the user refers to something from before. Returns a ready-to-inject context block combining facts + related past chats + recent turns. |
+| `memory_recall(query, session_id?, project?, project_scope?)` | Starting a task, or the user refers to something from before. Scope is `strict` (default), `boost`, or `global`. |
 | `memory_append(session_id, user_message?, assistant_response?)` | Recording a turn manually (the hooks normally do this). Idempotent. |
-| `search_history(query, top_k?, project?)` | Finding a specific past conversation turn across all sessions ("the review from last week"). |
+| `search_history(query, top_k?, project?, project_scope?)` | Finding a specific past turn. Project searches are strict by default; use `boost`/`global` deliberately for cross-project lookup. |
 | `search_knowledge_base(query, top_k?, project?)` | The question is about a project document/spec (docs/ folders are auto-ingested). |
 
 ### Save & consolidate

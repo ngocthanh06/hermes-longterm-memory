@@ -17,7 +17,7 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, documents, hybrid, memory_store
+from app import config, documents, hybrid, memory_store, scope_policy
 
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -188,41 +188,37 @@ def save_facts(
         # both cosine bands below miss — the texts score far apart, and the
         # LLM band only detects rewordings. Same object supersedes too: a
         # reconfirmed fact gets a fresh created_at instead of decaying from
-        # its original date. Scope mirrors recall co-visibility
-        # (search_memories): a fact may only retire what could have
-        # co-appeared with it — same project or the default project, plus
-        # preferences, which are global in recall.
+        # its original date. A project-specific fact may only retire the same
+        # project's facts or legacy global/default facts. Its type does not
+        # grant cross-project authority (a project UI preference is not a
+        # global user preference). A genuinely global/default correction may
+        # still retire matching project records.
         superseded = []
         superseded_ids = []
         triple = _triple_of(fact) if config.TRIPLE_SUPERSEDE else None
         if triple:
+            triple_must = [
+                qmodels.FieldCondition(
+                    key="user_id", match=qmodels.MatchValue(value=user_id)
+                ),
+                qmodels.IsEmptyCondition(
+                    is_empty=qmodels.PayloadField(key="superseded_by")
+                ),
+                qmodels.FieldCondition(
+                    key="triple_subject", match=qmodels.MatchValue(value=triple[0])
+                ),
+                qmodels.FieldCondition(
+                    key="triple_relation", match=qmodels.MatchValue(value=triple[1])
+                ),
+            ]
+            if project_id != config.DEFAULT_PROJECT:
+                triple_must.append(qmodels.FieldCondition(
+                    key="project_id",
+                    match=qmodels.MatchAny(any=[project_id, config.DEFAULT_PROJECT]),
+                ))
             candidates, _ = client.scroll(
                 collection_name=config.MEMORIES_COLLECTION,
-                scroll_filter=qmodels.Filter(
-                    must=[
-                        qmodels.FieldCondition(
-                            key="user_id", match=qmodels.MatchValue(value=user_id)
-                        ),
-                        qmodels.IsEmptyCondition(
-                            is_empty=qmodels.PayloadField(key="superseded_by")
-                        ),
-                        qmodels.FieldCondition(
-                            key="triple_subject", match=qmodels.MatchValue(value=triple[0])
-                        ),
-                        qmodels.FieldCondition(
-                            key="triple_relation", match=qmodels.MatchValue(value=triple[1])
-                        ),
-                    ],
-                    should=[
-                        qmodels.FieldCondition(
-                            key="project_id",
-                            match=qmodels.MatchAny(any=[project_id, config.DEFAULT_PROJECT]),
-                        ),
-                        qmodels.FieldCondition(
-                            key="type", match=qmodels.MatchValue(value="preference")
-                        ),
-                    ],
-                ),
+                scroll_filter=qmodels.Filter(must=triple_must),
                 limit=16,
                 with_payload=["text"],
             )
@@ -421,7 +417,11 @@ def search_memories(
     user_id: str = config.USER_ID,
     top_k: int = config.RECALL_TOP_K_MEMORIES,
     project: str | None = None,
+    project_scope: str = "strict",
 ) -> list[dict]:
+    allowed_projects = scope_policy.filter_projects(
+        project, project_scope, config.DEFAULT_PROJECT
+    )
     vector = embed_model.get_text_embedding(query)
     flt = _active_filter(user_id)
     # Session summaries share this collection but are not facts — recall
@@ -436,20 +436,15 @@ def search_memories(
         flt.must_not.append(
             qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value="done"))
         )
-    if project:
-        # Scope: project-anchored knowledge (facts/decisions/tasks) from
-        # OTHER projects stays out of auto-recall — asking about project A
-        # must not surface project B's decisions. Preferences are global by
-        # nature (commit style, language, workflow) and pass regardless;
-        # so does anything stored under the default project. Cross-project
-        # lookups stay available through the explicit MCP search tools.
-        flt.should = [
-            qmodels.FieldCondition(
-                key="project_id",
-                match=qmodels.MatchAny(any=[project, config.DEFAULT_PROJECT]),
-            ),
-            qmodels.FieldCondition(key="type", match=qmodels.MatchValue(value="preference")),
-        ]
+    if allowed_projects:
+        # A fact's type does not make it global. A preference captured in
+        # project B may describe B's UI, not a standing user convention.
+        # Legacy/default memories are the only global records until scope is
+        # represented explicitly in the schema.
+        flt.must.append(qmodels.FieldCondition(
+            key="project_id",
+            match=qmodels.MatchAny(any=allowed_projects),
+        ))
     dense_hits = client.search(
         collection_name=config.MEMORIES_COLLECTION,
         query_vector=vector,
@@ -472,7 +467,7 @@ def search_memories(
         age = max(now - last_seen, 0.0)
         final = e["similarity"] * _decay(age, config.MEMORY_HALF_LIFE_DAYS) * (0.5 + 0.5 * importance)
         hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
-        if project and hit_project == project:
+        if scope_policy.boost_same_project(project, hit_project, project_scope):
             final *= config.RECALL_PROJECT_BOOST
         if payload.get("type") == "preference":
             # Standing conventions must survive the top-k race against
@@ -969,6 +964,7 @@ def recall(
     user_id: str = config.USER_ID,
     session_id: str = "",
     project: str = "",
+    project_scope: str = "strict",
     top_k_memories: int = config.RECALL_TOP_K_MEMORIES,
     top_k_history: int = config.RECALL_TOP_K_HISTORY,
     recent_turns: int = config.RECALL_RECENT_TURNS,
@@ -979,7 +975,9 @@ def recall(
 
     Project scoping: explicit `project` wins; otherwise it is derived from
     the current session's own stored messages (the hook stamped them), so
-    the caller needs no extra knowledge. Same-project hits get a soft boost.
+    the caller needs no extra knowledge. `strict` includes only that project
+    plus legacy global/default memories; `boost` permits cross-project hits;
+    `global` searches everything without a project preference.
     """
     if not project and session_id:
         project = memory_store.get_session_project(client, session_id, user_id)
@@ -987,7 +985,8 @@ def recall(
             project = ""  # no meaningful project — skip boosting
 
     mems = search_memories(
-        client, embed_model, query, user_id, top_k_memories, project=project or None
+        client, embed_model, query, user_id, top_k_memories,
+        project=project or None, project_scope=project_scope,
     )
 
     now = time.time()
@@ -995,7 +994,7 @@ def recall(
     for h in memory_store.search_history(
         client, embed_model, query, user_id,
         exclude_session=session_id or None, top_k=top_k_history * 2,
-        project=project or None,
+        project=project or None, project_scope=project_scope,
     ):
         age = max(now - (h["timestamp"] or now), 0.0)
         h["score"] = h.pop("score") * _decay(age, config.HISTORY_HALF_LIFE_DAYS)
@@ -1067,6 +1066,7 @@ def recall(
 
     return {
         "project": project or config.DEFAULT_PROJECT,
+        "project_scope": project_scope,
         "memories": mems,
         "related_history": history,
         "session_summaries": summaries,

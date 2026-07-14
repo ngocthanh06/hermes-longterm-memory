@@ -14,7 +14,7 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
-from app import config, consolidation, documents, memories, memory_store, providers, qdrant_setup, scheduler, transfer
+from app import config, consolidation, documents, memories, memory_store, providers, qdrant_setup, scheduler, scope_policy, transfer
 from app.mcp_server import mcp
 from app.runtime import state
 
@@ -110,6 +110,7 @@ class RecallRequest(BaseModel):
     query: str
     session_id: str = ""
     project: str = ""  # empty -> derived from the session's stored messages
+    project_scope: scope_policy.ProjectScope = "strict"
     top_k_memories: int = config.RECALL_TOP_K_MEMORIES
     top_k_history: int = config.RECALL_TOP_K_HISTORY
     recent_turns: int = config.RECALL_RECENT_TURNS
@@ -277,6 +278,7 @@ def memory_recall(payload: RecallRequest):
         state["qdrant_client"], state["embed_model"], payload.query,
         session_id=payload.session_id,
         project=payload.project,
+        project_scope=payload.project_scope,
         top_k_memories=payload.top_k_memories,
         top_k_history=payload.top_k_history,
         recent_turns=payload.recent_turns,

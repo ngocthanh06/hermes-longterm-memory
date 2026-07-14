@@ -118,11 +118,9 @@ CONTRADICTION_DETECTION = os.getenv("CONTRADICTION_DETECTION", "true").lower() =
 GRAPH_TOPIC_CLUSTERING = os.getenv("GRAPH_TOPIC_CLUSTERING", "true").lower() == "true"
 GRAPH_TOPIC_MIN_SIMILARITY = float(os.getenv("GRAPH_TOPIC_MIN_SIMILARITY", "0.55"))
 # Recall multiplier for same-project hits, applied on top of the scope rule:
-# when a project is known, auto-recall hard-scopes facts/history to that
-# project + the default project (preferences are global and always pass) —
-# asking in project A must not surface project B's decisions. The boost then
-# ranks same-project hits above default-project ones. Cross-project lookups
-# stay available through the explicit MCP search tools (no project given).
+# in strict mode, facts/history are hard-scoped to that project + the default
+# project. A memory type never implies global scope. Boost mode ranks matching
+# project hits above cross-project/default ones; global mode applies no boost.
 RECALL_PROJECT_BOOST = float(os.getenv("RECALL_PROJECT_BOOST", "1.5"))
 # Recall multiplier for type=preference hits. Preferences are standing
 # conventions (commit style, comment language, workflow) that matter most at
