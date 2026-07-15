@@ -272,6 +272,32 @@ def test_lifecycle_recall_saves_prompt_and_injects_context(monkeypatch, capsys):
     assert state[-1]["last_recall_ok"] is True
 
 
+def test_wrapper_language_regex_matches_common_vietnamese():
+    vn_re = user_prompt_submit._VN_CHARS_RE
+    assert vn_re.search("chào bạn")  # plain-vowel tones (à/ạ) must be caught
+    assert vn_re.search("cảm ơn bạn nhiều")
+    assert not vn_re.search("what does this function do?")
+
+
+def test_lifecycle_recall_wrapper_matches_vietnamese_prompt(monkeypatch, capsys):
+    monkeypatch.setattr(user_prompt_submit, "read_payload", lambda: {
+        "session_id": "s1", "turn_id": "t1", "cwd": "/repo", "prompt": "chào bạn nhớ gì không?",
+    })
+    monkeypatch.setattr(user_prompt_submit, "save_pending_prompt", lambda p, q: None)
+    monkeypatch.setattr(user_prompt_submit, "resolve_project", lambda _cwd: ("repo", "folder"))
+    monkeypatch.setattr(user_prompt_submit, "post_json", lambda _path, _body, timeout: {
+        "context_block": "remember this",
+    })
+    monkeypatch.setattr(user_prompt_submit, "update_state", lambda **values: None)
+
+    user_prompt_submit.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["hookSpecificOutput"]["additionalContext"].startswith(
+        "Bộ nhớ dài hạn (tự động gọi lại):"
+    )
+
+
 def test_lifecycle_stop_records_pending_turn(monkeypatch, capsys):
     posted = []
     removed = []

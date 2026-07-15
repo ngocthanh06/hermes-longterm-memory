@@ -547,6 +547,19 @@ def test_add_message_idempotent(client):
     assert count == 1
 
 
+def test_add_message_retry_preserves_consolidated_status(client):
+    """A retry that reuses the same point id must not reopen an
+    already-consolidated turn back into the pending backlog."""
+    embed = FakeEmbed()
+    memory_store.add_message(client, embed, "s1", "user", "hello")
+    points = memory_store.fetch_unconsolidated(client, "s1")
+    memory_store.mark_consolidated(client, [p.id for p in points])
+    assert memory_store.fetch_unconsolidated(client, "s1") == []
+
+    memory_store.add_message(client, embed, "s1", "user", "hello")  # retry
+    assert memory_store.fetch_unconsolidated(client, "s1") == []
+
+
 def test_mark_consolidated_roundtrip(client):
     embed = FakeEmbed()
     memory_store.add_message(client, embed, "s1", "user", "hello")
@@ -1015,6 +1028,12 @@ def test_route_query_triggers():
 def test_is_vietnamese():
     assert memories.is_vietnamese("bạn có thể giúp tôi không?") is True
     assert memories.is_vietnamese("sửa lỗi này giúp tôi") is True
+    # Regression: the plain-vowel tone marks (à/á/ả/ã/ạ, è/é/ẻ/ẽ/ẹ, etc.) are
+    # at least as common as the special-letter tones (ơ/ư/ê/ô/ă/â) and must
+    # be detected too - "chào bạn" previously false-negatived on this.
+    assert memories.is_vietnamese("chào bạn") is True
+    assert memories.is_vietnamese("cảm ơn bạn nhiều") is True
+    assert memories.is_vietnamese("của tôi") is True
     assert memories.is_vietnamese("what does this function do?") is False
     assert memories.is_vietnamese("please fix the build") is False
 

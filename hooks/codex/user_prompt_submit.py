@@ -27,7 +27,9 @@ MIN_PROMPT_CHARS = env_int("LONGBRAIN_RECALL_MIN_PROMPT_CHARS", 15)
 # matched server-side), so it should follow the prompt's language too instead
 # of guaranteeing a dose of English on every single Vietnamese turn.
 _VN_CHARS_RE = re.compile(
-    r"[ăâđêôơưằắẳẵặầấẩẫậềếểễệồốổỗộờớởỡợừứửữự]", re.IGNORECASE
+    r"[ăâàáảãạằắẳẵặầấẩẫậêèéẻẽẹềếểễệìíỉĩịôơòóỏõọồốổỗộờớởỡợ"
+    r"ưùúủũụừứửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
 )
 
 

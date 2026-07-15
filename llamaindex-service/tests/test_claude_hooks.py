@@ -10,6 +10,7 @@ import pytest
 
 import post_llm_call
 import project_catalog
+import user_prompt_submit
 from common import _slugify, resolve_project
 from stop import extract_last_turn
 
@@ -208,3 +209,14 @@ def test_env_int_malformed_value_falls_back(monkeypatch):
     assert common.env_int("HERMES_TEST_INT", 42) == 42
     monkeypatch.setenv("HERMES_TEST_INT", "7")
     assert common.env_int("HERMES_TEST_INT", 7) == 7
+
+
+# ---------------------------------------------------------------------------
+# user_prompt_submit: wrapper line language must mirror app.memories.is_vietnamese
+# ---------------------------------------------------------------------------
+def test_wrapper_language_regex_matches_common_vietnamese():
+    vn_re = user_prompt_submit._VN_CHARS_RE
+    assert vn_re.search("chào bạn")  # plain-vowel tones (à/ạ) must be caught
+    assert vn_re.search("cảm ơn bạn nhiều")
+    assert vn_re.search("sửa lỗi này giúp tôi")
+    assert not vn_re.search("what does this function do?")

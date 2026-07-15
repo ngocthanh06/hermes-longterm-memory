@@ -107,8 +107,10 @@ def add_message(
 ) -> str:
     point_id = message_point_id(user_id, session_id, role, content)
     now = time.time()
+    consolidated = False
     existing = client.retrieve(
-        collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id], with_payload=["timestamp"]
+        collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
+        with_payload=["timestamp", "consolidated"],
     )
     if existing:
         prev_ts = existing[0].payload.get("timestamp") or 0
@@ -147,6 +149,13 @@ def add_message(
         ).count
         if newer_activity:
             point_id = message_point_id(user_id, session_id, role, content, disambiguator=str(now))
+        else:
+            # A genuine retry reuses the SAME point id, so this upsert would
+            # otherwise silently reset an already-consolidated turn back to
+            # pending — reopening it for the next sweep and re-spending an
+            # LLM call on content already processed. Preserve whatever
+            # consolidated status the existing point already has instead.
+            consolidated = bool(existing[0].payload.get("consolidated"))
 
     vector = embed_model.get_text_embedding(content)
     payload = {
@@ -156,7 +165,7 @@ def add_message(
         "role": role,
         "content": content,
         "timestamp": now,
-        "consolidated": False,
+        "consolidated": consolidated,
     }
     if source_agent:
         payload["source_agent"] = source_agent

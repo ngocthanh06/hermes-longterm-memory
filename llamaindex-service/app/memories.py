@@ -51,7 +51,9 @@ def is_meta_about_assistant(text: str) -> bool:
 # the CURRENT query's language removes one deterministic source of English
 # text leaking into an otherwise Vietnamese conversation.
 _VN_CHARS_RE = re.compile(
-    r"[ăâđêôơưằắẳẵặầấẩẫậềếểễệồốổỗộờớởỡợừứửữự]", re.IGNORECASE
+    r"[ăâàáảãạằắẳẵặầấẩẫậêèéẻẽẹềếểễệìíỉĩịôơòóỏõọồốổỗộờớởỡợ"
+    r"ưùúủũụừứửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
 )
 
 
