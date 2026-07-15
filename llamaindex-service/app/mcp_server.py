@@ -53,20 +53,28 @@ def _register_tools() -> None:
         return result["context_block"] or "No relevant long-term memory found."
 
     @mcp.tool()
-    def memory_append(session_id: str, user_message: str = "", assistant_response: str = "") -> str:
-        """Persist a completed conversation turn into episodic memory. Idempotent —
-        safe to retry."""
+    def memory_append(
+        session_id: str, user_message: str = "", assistant_response: str = "",
+        turn_id: str = "",
+    ) -> str:
+        """Persist a completed conversation turn into episodic memory. Idempotent
+        when the caller passes a stable turn_id (a per-turn id from your own
+        agent, if you have one) — without it, retries are best-effort only:
+        content/session-state alone cannot distinguish every retry from a
+        genuine repeat (see memory_store.add_message)."""
         client, embed = state["qdrant_client"], state["embed_model"]
         # Same session stickiness as REST /memory/append.
         project_id = memory_store.get_session_project(client, session_id)
         n = 0
         if user_message.strip():
             memory_store.add_message(client, embed, session_id, "user", user_message,
-                                     project_id=project_id)
+                                     project_id=project_id, sibling_content=assistant_response,
+                                     turn_id=turn_id)
             n += 1
         if assistant_response.strip():
             memory_store.add_message(client, embed, session_id, "assistant", assistant_response,
-                                     project_id=project_id)
+                                     project_id=project_id, sibling_content=user_message,
+                                     turn_id=turn_id)
             n += 1
         return f"Stored {n} message(s) for session {session_id}."
 

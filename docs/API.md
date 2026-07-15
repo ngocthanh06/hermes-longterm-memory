@@ -98,15 +98,23 @@ curl -X POST localhost:8800/query -H 'Content-Type: application/json' \
 #### `POST /memory/append`
 
 Record one completed chat turn into episodic memory. Called by the
-`post_llm_call` / Stop hooks after every turn — no LLM involved, idempotent.
+`post_llm_call` / Stop hooks after every turn — no LLM involved.
 `project_source` tells the server how the hook resolved the project
 (`folder` / `active` / `default`) so session stickiness can decide whether a
 change of project is intentional.
 
+`turn_id` (optional but recommended): a stable per-turn id from the calling
+agent (Claude Code's transcript entry uuid, Codex's own turn id). With it,
+retries are exactly idempotent. Without it, the server falls back to a
+content/session-state heuristic that handles ordinary hook retries but is
+not airtight — a session repeating the same handful of exchanges can, in
+rare cases, have one occurrence overwrite another.
+
 ```bash
 curl -X POST localhost:8800/memory/append -H 'Content-Type: application/json' \
   -d '{"session_id": "s1", "user_message": "...", "assistant_response": "...",
-       "project_id": "erp", "project_source": "folder", "source_agent": "claude-code"}'
+       "project_id": "erp", "project_source": "folder", "source_agent": "claude-code",
+       "turn_id": "optional-stable-per-turn-id"}'
 ```
 
 ```json
@@ -355,7 +363,7 @@ requested explicitly.
 | Tool | Use it when |
 |---|---|
 | `memory_recall(query, session_id?, project?, project_scope?)` | Starting a task, or the user refers to something from before. Scope is `strict` (default), `boost`, or `global`. |
-| `memory_append(session_id, user_message?, assistant_response?)` | Recording a turn manually (the hooks normally do this). Idempotent. |
+| `memory_append(session_id, user_message?, assistant_response?, turn_id?)` | Recording a turn manually (the hooks normally do this). Idempotent when `turn_id` is given; best-effort otherwise (see `/memory/append` above). |
 | `search_history(query, top_k?, project?, project_scope?)` | Finding a specific past turn. Project searches are strict by default; use `boost`/`global` deliberately for cross-project lookup. |
 | `search_knowledge_base(query, top_k?, project?)` | The question is about a project document/spec (docs/ folders are auto-ingested). |
 

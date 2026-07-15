@@ -141,7 +141,7 @@ def debug_dump(raw: str) -> None:
 _debug_dump = debug_dump  # internal call sites
 
 
-def _extract(payload: dict) -> tuple[str, str, str]:
+def _extract(payload: dict) -> tuple[str, str, str, str]:
     session_id = (
         payload.get("session_id")
         or payload.get("session")
@@ -152,6 +152,7 @@ def _extract(payload: dict) -> tuple[str, str, str]:
     sources = [payload.get("extra") or {}, payload]
     user_message = ""
     assistant_response = ""
+    turn_id = ""
     for src in sources:
         user_message = user_message or src.get("user_message") or src.get("prompt") or ""
         assistant_response = (
@@ -161,6 +162,10 @@ def _extract(payload: dict) -> tuple[str, str, str]:
             or src.get("completion")
             or ""
         )
+        # Present in most real payloads (observed in logs/hook-debug.jsonl) —
+        # a stable per-turn id lets the service skip the content/session-state
+        # retry-vs-repeat heuristic entirely (see memory_store.add_message).
+        turn_id = turn_id or str(src.get("turn_id") or "")
 
     # Fallback: an OpenAI-style messages list
     if not (user_message and assistant_response):
@@ -176,7 +181,7 @@ def _extract(payload: dict) -> tuple[str, str, str]:
             if user_message and assistant_response:
                 break
 
-    return str(session_id), user_message, assistant_response
+    return str(session_id), user_message, assistant_response, turn_id
 
 
 def main():
@@ -187,7 +192,7 @@ def main():
     except json.JSONDecodeError:
         return
 
-    session_id, user_message, assistant_response = _extract(payload)
+    session_id, user_message, assistant_response, turn_id = _extract(payload)
     if not user_message and not assistant_response:
         return
 
@@ -200,6 +205,7 @@ def main():
             "project_id": project_id,
             "project_source": project_source,
             "source_agent": "hermes",
+            "turn_id": turn_id,
         }
     ).encode()
 

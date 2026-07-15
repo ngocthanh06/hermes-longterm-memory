@@ -14,17 +14,17 @@ from post_llm_call import _extract
 # payload extraction (shape has varied between Hermes builds)
 # ---------------------------------------------------------------------------
 def test_extract_from_extra():
-    sid, user, assistant = _extract(
+    sid, user, assistant, turn_id = _extract(
         {"session_id": "s1", "extra": {"user_message": "u", "assistant_response": "a"}}
     )
-    assert (sid, user, assistant) == ("s1", "u", "a")
+    assert (sid, user, assistant, turn_id) == ("s1", "u", "a", "")
 
 
 def test_extract_top_level_aliases():
-    sid, user, assistant = _extract(
+    sid, user, assistant, turn_id = _extract(
         {"conversation_id": "c1", "prompt": "u", "completion": "a"}
     )
-    assert (sid, user, assistant) == ("c1", "u", "a")
+    assert (sid, user, assistant, turn_id) == ("c1", "u", "a", "")
 
 
 def test_extract_messages_list_fallback():
@@ -36,14 +36,25 @@ def test_extract_messages_list_fallback():
             {"role": "assistant", "content": "a"},
         ],
     }
-    sid, user, assistant = _extract(payload)
-    assert (sid, user, assistant) == ("s2", "u", "a")  # newest of each role
+    sid, user, assistant, turn_id = _extract(payload)
+    assert (sid, user, assistant, turn_id) == ("s2", "u", "a", "")  # newest of each role
 
 
 def test_extract_empty_payload():
-    sid, user, assistant = _extract({})
+    sid, user, assistant, turn_id = _extract({})
     assert sid == "unknown"
-    assert user == "" and assistant == ""
+    assert user == "" and assistant == "" and turn_id == ""
+
+
+def test_extract_turn_id_from_extra():
+    # Observed in real payloads (logs/hook-debug.jsonl) — a stable per-turn
+    # id lets the service skip content/session-state retry-vs-repeat guessing.
+    sid, user, assistant, turn_id = _extract(
+        {"session_id": "s1", "extra": {
+            "user_message": "u", "assistant_response": "a", "turn_id": "abc123",
+        }}
+    )
+    assert (sid, user, assistant, turn_id) == ("s1", "u", "a", "abc123")
 
 
 # ---------------------------------------------------------------------------

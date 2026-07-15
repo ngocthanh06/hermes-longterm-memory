@@ -243,10 +243,12 @@ def test_sync_state_distinguishes_extracted_from_recorded(tmp_path, monkeypatch)
     assert state["last_scan_extracted"] == 1
     assert state["processed"] == []
 
-    monkeypatch.setattr(turn_ended, "post_json", lambda _path, _body: True)
+    posted = []
+    monkeypatch.setattr(turn_ended, "post_json", lambda _path, body: posted.append(body) or True)
     assert turn_ended.sync_recent_rollouts() == 1
     state = json.loads(state_file.read_text())
     assert len(state["processed"]) == 1
+    assert posted[0]["turn_id"] == "t1"
     assert state["last_successful_write_at"] > 0
 
 
