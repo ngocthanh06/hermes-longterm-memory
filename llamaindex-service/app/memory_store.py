@@ -2,12 +2,13 @@
 
 Every user/assistant message is embedded and upserted with a deterministic
 point id derived from (user, session, role, content), so hook retries and
-replays are idempotent — a repeat within MESSAGE_DEDUPE_WINDOW_SECONDS is
-treated as a retry of the same turn. A repeat of identical content AFTER
-that window (a genuinely new occurrence, not a retry) gets a disambiguated
-id instead of overwriting the earlier message. Turns are retrieved two ways:
-chronologically per session (to rebuild the working buffer) and semantically
-across sessions (long-term recall of past conversations).
+replays are idempotent — a repeat of identical content with no OTHER turn
+recorded since is treated as a retry of the same turn. A repeat that arrives
+after the session has recorded further activity (a genuinely new occurrence,
+not a retry) gets a disambiguated id instead of overwriting the earlier
+message. Turns are retrieved two ways: chronologically per session (to
+rebuild the working buffer) and semantically across sessions (long-term
+recall of past conversations).
 """
 
 import hashlib
@@ -68,6 +69,31 @@ def _scroll_all(
     return points
 
 
+def _recent_points(
+    client: QdrantClient, collection: str, flt: qmodels.Filter,
+    with_payload, limit: int, ascending: bool = False,
+) -> list:
+    """Fetch up to `limit` points ordered by `timestamp` directly from
+    Qdrant (native order_by, backed by the existing timestamp payload
+    index) — the newest `limit` by default, or the oldest when `ascending`.
+    Used where only one end of a session's history is needed (the founding
+    turn, or the last few turns): cheaper than _scroll_all's full-session
+    pagination, which is only necessary when every matching point is
+    actually required (e.g. the unconsolidated backlog)."""
+    points, _ = client.scroll(
+        collection_name=collection,
+        scroll_filter=flt,
+        order_by=qmodels.OrderBy(
+            key="timestamp",
+            direction=qmodels.Direction.ASC if ascending else qmodels.Direction.DESC,
+        ),
+        limit=limit,
+        with_payload=with_payload,
+        with_vectors=False,
+    )
+    return points
+
+
 def add_message(
     client: QdrantClient,
     embed_model,
@@ -85,12 +111,24 @@ def add_message(
     )
     if existing:
         prev_ts = existing[0].payload.get("timestamp") or 0
-        if now - prev_ts > config.MESSAGE_DEDUPE_WINDOW_SECONDS:
-            # Same (session, role, content) as an existing point, but far
-            # enough apart in time to be a genuinely new occurrence (e.g. the
-            # user saying "ok" again later) rather than a hook retry of the
-            # same turn — disambiguate instead of silently overwriting the
-            # earlier message. See config.MESSAGE_DEDUPE_WINDOW_SECONDS.
+        # A fixed time window can't tell a slow retry (still the SAME turn,
+        # arriving late) apart from a genuine repeat (a new occurrence of
+        # identical content) — both look identical from content+elapsed time
+        # alone. What actually distinguishes them: a retry of this exact turn
+        # cannot be followed by any OTHER turn yet (the hook only fires once
+        # a turn completes, so nothing new can have been recorded for this
+        # session in between two attempts at writing the same one). If the
+        # session has moved on since the existing point was written, this
+        # match is a genuine new occurrence, not a retry.
+        newer_activity = client.count(
+            collection_name=config.CHAT_HISTORY_COLLECTION,
+            count_filter=_user_filter(user_id, [
+                qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id)),
+                qmodels.FieldCondition(key="timestamp", range=qmodels.Range(gt=prev_ts)),
+            ]),
+            exact=True,
+        ).count
+        if newer_activity:
             point_id = message_point_id(user_id, session_id, role, content, disambiguator=str(now))
 
     vector = embed_model.get_text_embedding(content)
@@ -129,18 +167,16 @@ def get_session_project(
     The EARLIEST turn wins, deterministically: a resumed session keeps its
     founding project even if later turns were written while the sidebar
     pointed elsewhere. Sessions with no stored turns return `fallback`."""
-    points = _scroll_all(
+    points = _recent_points(
         client, config.CHAT_HISTORY_COLLECTION,
         _user_filter(
             user_id,
             [qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id))],
         ),
-        with_payload=["project_id", "timestamp"],
-        page_size=config.CHAT_HISTORY_MAX_MESSAGES,
+        with_payload=["project_id"], limit=1, ascending=True,
     )
     if not points:
         return fallback
-    points.sort(key=lambda p: p.payload.get("timestamp") or 0)
     return points[0].payload.get("project_id") or fallback
 
 
@@ -219,16 +255,19 @@ def rename_project(client: QdrantClient, old: str, new: str,
 def _session_points(
     client: QdrantClient, session_id: str, user_id: str, limit: int
 ) -> list:
-    points = _scroll_all(
+    """The newest `limit` turns of a session, in chronological order. Fetched
+    directly via order_by rather than paginating the whole session — a
+    session much longer than `limit` would otherwise cost one Qdrant
+    round-trip per page just to read off the tail end."""
+    points = _recent_points(
         client, config.CHAT_HISTORY_COLLECTION,
         _user_filter(
             user_id,
             [qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id))],
         ),
-        with_payload=True,
-        page_size=limit,
+        with_payload=True, limit=limit,
     )
-    points.sort(key=lambda p: p.payload.get("timestamp", 0))
+    points.reverse()  # _recent_points is newest-first; callers want chronological order
     return points
 
 
@@ -253,11 +292,14 @@ def get_recent_turns(
 ) -> list[dict]:
     if limit <= 0:
         return []  # points[-0:] would be the WHOLE session, not none
-    points = _session_points(client, session_id, user_id, config.CHAT_HISTORY_MAX_MESSAGES)
+    # Fetches exactly the last `limit` turns directly — called on every
+    # recall(), so this stays O(1) in the session's length instead of
+    # scanning up to CHAT_HISTORY_MAX_MESSAGES turns just to keep the tail.
+    points = _session_points(client, session_id, user_id, limit)
     return [
         {"role": p.payload["role"], "content": p.payload["content"],
          "timestamp": p.payload.get("timestamp")}
-        for p in points[-limit:]
+        for p in points
     ]
 
 

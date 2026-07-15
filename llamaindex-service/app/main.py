@@ -203,6 +203,11 @@ async def ingest_file(
             f.write(await file.read())
         stored = documents.store_original(tmp_path, file.filename)
 
+    # An explicit empty string (as opposed to omitting the form field) must
+    # still mean "default", matching ingest_file's own normalization below —
+    # otherwise the dedup check ahead would skip the project filter entirely
+    # and could match another project's file as a false-positive duplicate.
+    project_id = project_id or config.DEFAULT_PROJECT
     parsed_metadata.setdefault("source", file.filename)
     parsed_metadata["stored_path"] = str(stored)
     if documents.already_ingested(state["qdrant_client"], str(stored), project_id):
@@ -240,7 +245,7 @@ def query(payload: QueryRequest):
 # Memory (L2 + L3)
 # ---------------------------------------------------------------------------
 @app.post("/memory/append")
-def memory_append(payload: MemoryAppendRequest):
+def memory_append(payload: MemoryAppendRequest, background_tasks: BackgroundTasks):
     """Persist a completed turn into episodic memory (no LLM call).
 
     Called from the Hermes `post_llm_call` hook so every conversation lands
@@ -266,6 +271,14 @@ def memory_append(payload: MemoryAppendRequest):
         )
         appended += 1
     meta = qdrant_setup.get_meta(client) or {}
+    # CONSOLIDATION_FORCE_TURNS only makes a continuously-active session
+    # ELIGIBLE for the next sweep — without a trigger here, nothing actually
+    # runs one until the session ends, a new session starts, or the service
+    # reboots. Every append attempts the debounced sweep check (cheap: a
+    # lock + time comparison when it's not yet due) so a long-running
+    # session's backlog gets flushed within one debounce window of crossing
+    # the threshold, not indefinitely.
+    background_tasks.add_task(scheduler.run_sweep_if_due, state)
     return {"status": "ok", "appended": appended, "project": project_id,
             "last_written_at": meta.get("last_written_at")}
 

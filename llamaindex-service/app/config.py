@@ -65,15 +65,6 @@ SCHEMA_VERSION = 4
 # ---------------------------------------------------------------------------
 CHAT_MEMORY_TOKEN_LIMIT = int(os.getenv("CHAT_MEMORY_TOKEN_LIMIT", "3000"))
 CHAT_HISTORY_MAX_MESSAGES = int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "200"))
-# message_point_id hashes (user, session, role, content) with no adapter-
-# supplied turn id, so two genuinely distinct turns with identical content
-# ("ok" said twice) collide on the same id — this window disambiguates them:
-# a repeat within it is treated as a hook retry of the same turn (idempotent,
-# same id, safe to overwrite); a repeat after it is treated as a new
-# occurrence and gets a distinguishing id instead of silently overwriting the
-# earlier message. A heuristic, not a guarantee — a real turn_id from the
-# adapter would be exact, but that requires an API/hook contract change.
-MESSAGE_DEDUPE_WINDOW_SECONDS = float(os.getenv("LONGBRAIN_MESSAGE_DEDUPE_WINDOW", "60"))
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "4"))
 
 RECALL_TOP_K_MEMORIES = int(os.getenv("RECALL_TOP_K_MEMORIES", "5"))
