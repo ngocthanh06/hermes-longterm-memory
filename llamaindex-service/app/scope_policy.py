@@ -30,7 +30,19 @@ def filter_projects(
     return None
 
 
-def boost_same_project(project: str | None, hit_project: str, scope: str) -> bool:
-    """Whether the same-project score multiplier should be applied."""
+def boost_same_project(
+    project: str | None, hit_project: str, scope: str, default_project: str
+) -> bool:
+    """Whether the same-project score multiplier should be applied.
+
+    A session whose own project IS the default/legacy bucket has no
+    meaningful project to boost against — default is the catch-all, not a
+    specific project — so it never qualifies, even though it still passes
+    `filter_projects` for strict scoping."""
     checked = validate(scope)
-    return bool(project and checked != "global" and hit_project == project)
+    return bool(
+        project
+        and checked != "global"
+        and hit_project == project
+        and project != default_project
+    )

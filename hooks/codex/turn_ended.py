@@ -206,6 +206,7 @@ def sync_recent_rollouts() -> int:
                 "project_id": project_id,
                 "project_source": project_source,
                 "source_agent": SOURCE_AGENT,
+                "turn_id": turn["turn_id"],
             })
             if ok:
                 processed.add(fp)

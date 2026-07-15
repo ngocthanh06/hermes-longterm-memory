@@ -43,6 +43,7 @@ def main() -> None:
         "project_id": project_id,
         "project_source": project_source,
         "source_agent": "codex",
+        "turn_id": turn_id,
     })
     ok = result is not None
     update_state(

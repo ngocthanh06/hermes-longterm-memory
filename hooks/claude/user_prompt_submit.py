@@ -11,6 +11,7 @@ timeout. Any failure degrades to no injection — never blocks the prompt.
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,16 @@ MAX_CONTEXT_CHARS = env_int("LONGBRAIN_MEMORY_MAX_CONTEXT", 6000)
 # user's subscription tokens. The turn is still WRITTEN to memory by the Stop
 # hook; only the lookup is skipped.
 MIN_PROMPT_CHARS = env_int("LONGBRAIN_RECALL_MIN_PROMPT_CHARS", 15)
+
+# Mirrors app.memories.is_vietnamese — this wrapper line is the one piece of
+# injected text the hook itself controls (context_block's own headers are
+# matched server-side), so it should follow the query's language too instead
+# of guaranteeing a dose of English on every single Vietnamese turn.
+_VN_CHARS_RE = re.compile(
+    r"[ăâàáảãạằắẳẵặầấẩẫậêèéẻẽẹềếểễệìíỉĩịôơòóỏõọồốổỗộờớởỡợ"
+    r"ưùúủũụừứửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
+)
 
 
 def main():
@@ -44,7 +55,9 @@ def main():
     if context:
         # Keep injection bounded: it costs the user's subscription tokens
         # on every turn.
-        print("Long-term memory (auto-recalled):\n" + context[:MAX_CONTEXT_CHARS])
+        prefix = "Bộ nhớ dài hạn (tự động gọi lại):" if _VN_CHARS_RE.search(query) \
+            else "Long-term memory (auto-recalled):"
+        print(prefix + "\n" + context[:MAX_CONTEXT_CHARS])
 
 
 if __name__ == "__main__":

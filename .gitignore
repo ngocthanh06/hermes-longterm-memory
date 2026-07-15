@@ -20,3 +20,6 @@ venv/
 
 # --- Docker leftovers ---
 *.log
+
+# --- Local landing page (kept outside version control) ---
+landingpage/

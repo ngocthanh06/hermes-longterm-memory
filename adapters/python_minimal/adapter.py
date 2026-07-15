@@ -84,6 +84,13 @@ def after_response(session_id: str, cwd: str) -> None:
         "project_id": resolve_project(cwd),
         "project_source": "folder",  # cwd is a genuine workspace signal
         "source_agent": AGENT_NAME,
+        # If your agent exposes a stable per-turn id (a message/event id,
+        # not something you invent here), pass it as turn_id — it makes
+        # this call fully idempotent. Without one, retries are best-effort:
+        # content/session-state alone can't distinguish every retry from a
+        # genuine repeat (see adapters/README.md and
+        # memory_store.add_message's docstring in the service).
+        "turn_id": (turn.get("turn_id") or "").strip(),
     })
 
 

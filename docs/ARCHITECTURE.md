@@ -72,15 +72,20 @@ sequenceDiagram
     User->>Agent: chats
     Agent->>Hook: fires its post-turn event (payload on stdin)
     Note over Hook: best-effort — never breaks the chat turn
-    Hook->>API: {session_id, user_message, assistant_response,<br/>project_id, project_source, source_agent}
+    Hook->>API: {session_id, user_message, assistant_response,<br/>project_id, project_source, source_agent, turn_id?}
     API->>Store: add_message() per role
-    Store->>Store: embed content (fastembed, in-container)<br/>point ID = uuid5(user_id:session_id:role:sha256(content))<br/>→ IDEMPOTENT: retries never duplicate
+    Store->>Store: embed content (fastembed, in-container)<br/>turn_id given → point ID = uuid5(user_id:session_id:role:turn:turn_id) → EXACTLY idempotent<br/>turn_id absent → content/session-state heuristic → idempotent for ordinary retries, not airtight
     Store->>Qdrant: upsert into longbrain_chat_history
     Store->>Qdrant: touch last_written_at in longbrain_meta
 ```
 
 The hook set differs per agent (see §7) but the contract is identical: POST
-the turn, best-effort, idempotent.
+the turn, best-effort. Claude Code and Codex pass a real `turn_id` (a
+transcript entry uuid / the agent's own turn id) so retries are exactly
+idempotent; Hermes forwards one when its payload carries it (observed in
+most real payloads) and otherwise, like any caller with no stable turn id,
+falls back to a content/session-state heuristic that is best-effort only
+(see §6, `POST /memory/append`).
 
 ### 3b. Distillation flow (consolidation, L2 → L3)
 
@@ -218,7 +223,7 @@ between two image builds can silently diverge.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Status + `last_written_at` + point counts per collection |
-| `POST /memory/append` | Record one conversation turn (called by a hook) — idempotent |
+| `POST /memory/append` | Record one conversation turn (called by a hook) — idempotent when `turn_id` is given, best-effort otherwise (see §3a) |
 | `POST /memory/recall` | Combined recall of L1+L2+L3 → context_block |
 | `POST /memory/facts` | Save distilled facts |
 | `POST /memory/search` | Search L3 |

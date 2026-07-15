@@ -186,6 +186,11 @@ CONSOLIDATION_ENABLED = os.getenv("CONSOLIDATION_ENABLED", "true").lower() == "t
 CONSOLIDATION_INTERVAL = float(os.getenv("CONSOLIDATION_INTERVAL", "0"))
 CONSOLIDATION_IDLE_SECONDS = float(os.getenv("CONSOLIDATION_IDLE_SECONDS", "900"))  # session quiet 15m
 CONSOLIDATION_MIN_TURNS = int(os.getenv("CONSOLIDATION_MIN_TURNS", "2"))
+# A session that stays continuously active never goes idle, so the idle-time
+# trigger above never fires mid-session — unconsolidated turns pile up until
+# the user eventually pauses. Force a session into the pending sweep once its
+# backlog crosses this count, regardless of idle time.
+CONSOLIDATION_FORCE_TURNS = int(os.getenv("CONSOLIDATION_FORCE_TURNS", "40"))
 # Catch-up sweeps triggered by on_session_start are debounced: at most one
 # per this window, so opening several chats doesn't hammer the LLM API.
 CONSOLIDATION_SWEEP_DEBOUNCE = float(os.getenv("CONSOLIDATION_SWEEP_DEBOUNCE", "600"))

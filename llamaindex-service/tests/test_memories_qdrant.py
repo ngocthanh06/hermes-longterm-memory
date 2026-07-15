@@ -547,6 +547,92 @@ def test_add_message_idempotent(client):
     assert count == 1
 
 
+def test_add_message_retry_preserves_consolidated_status(client):
+    """A retry that reuses the same point id must not reopen an
+    already-consolidated turn back into the pending backlog."""
+    embed = FakeEmbed()
+    memory_store.add_message(client, embed, "s1", "user", "hello")
+    points = memory_store.fetch_unconsolidated(client, "s1")
+    memory_store.mark_consolidated(client, [p.id for p in points])
+    assert memory_store.fetch_unconsolidated(client, "s1") == []
+
+    memory_store.add_message(client, embed, "s1", "user", "hello")  # retry
+    assert memory_store.fetch_unconsolidated(client, "s1") == []
+
+
+def test_add_message_retry_of_second_occurrence_is_idempotent(client):
+    """A/B, then C/D, then A/B again (a genuine repeat, disambiguated), then
+    a RETRY of that second A/B — the retry must land on the same
+    disambiguated point, not generate yet another duplicate (previously the
+    disambiguator was str(now), so a retry of an already-disambiguated
+    occurrence could never recompute the same id)."""
+    embed = FakeEmbed()
+
+    def pair(u, a):
+        memory_store.add_message(client, embed, "s1", "user", u, sibling_content=a)
+        memory_store.add_message(client, embed, "s1", "assistant", a, sibling_content=u)
+
+    pair("A", "B")
+    pair("C", "D")
+    pair("A", "B")  # occurrence 2, disambiguated
+    before = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+
+    pair("A", "B")  # retry of occurrence 2
+    after = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+
+    assert after == before
+
+
+def test_add_message_alternating_content_without_turn_id_can_collide(client):
+    """Documents a known residual gap in the content/session-state heuristic
+    (no turn_id supplied): a session that only ever alternates between the
+    same two fixed strings collapses every anchor to the same fallback,
+    since excluding "this content and its sibling" excludes everything the
+    session has ever contained. A/B, B/A, A/B, B/A, A/B should be 5 distinct
+    turns (10 points) but the 5th collides with the 3rd without a turn_id."""
+    embed = FakeEmbed()
+
+    def pair(u, a):
+        memory_store.add_message(client, embed, "s1", "user", u, sibling_content=a)
+        memory_store.add_message(client, embed, "s1", "assistant", a, sibling_content=u)
+
+    pair("A", "B")
+    pair("B", "A")
+    pair("A", "B")
+    pair("B", "A")
+    pair("A", "B")
+
+    count = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+    assert count == 8  # would be 10 with a real turn_id — see the test below
+
+
+def test_add_message_alternating_content_with_turn_id_is_correct(client):
+    """The same alternating-content scenario, but with a real turn_id per
+    call (as /memory/append now forwards from Claude Code's transcript uuid
+    or Codex's own turn_id) — no collision, every occurrence gets its own
+    point regardless of content repeating."""
+    embed = FakeEmbed()
+
+    def pair(u, a, turn):
+        memory_store.add_message(client, embed, "s1", "user", u, sibling_content=a, turn_id=turn)
+        memory_store.add_message(client, embed, "s1", "assistant", a, sibling_content=u, turn_id=turn)
+
+    pair("A", "B", "t1")
+    pair("B", "A", "t2")
+    pair("A", "B", "t3")
+    pair("B", "A", "t4")
+    pair("A", "B", "t5")
+
+    count = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+    assert count == 10
+
+    # A retry of an earlier turn (same turn_id) stays idempotent even though
+    # its content is identical to a later, distinct turn.
+    memory_store.add_message(client, embed, "s1", "user", "A", sibling_content="B", turn_id="t1")
+    memory_store.add_message(client, embed, "s1", "assistant", "B", sibling_content="A", turn_id="t1")
+    assert client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count == 10
+
+
 def test_mark_consolidated_roundtrip(client):
     embed = FakeEmbed()
     memory_store.add_message(client, embed, "s1", "user", "hello")
@@ -1012,6 +1098,33 @@ def test_route_query_triggers():
     assert memories.route_query("build lại service")["history_hint"] is False
 
 
+def test_is_vietnamese():
+    assert memories.is_vietnamese("bạn có thể giúp tôi không?") is True
+    assert memories.is_vietnamese("sửa lỗi này giúp tôi") is True
+    # Regression: the plain-vowel tone marks (à/á/ả/ã/ạ, è/é/ẻ/ẽ/ẹ, etc.) are
+    # at least as common as the special-letter tones (ơ/ư/ê/ô/ă/â) and must
+    # be detected too - "chào bạn" previously false-negatived on this.
+    assert memories.is_vietnamese("chào bạn") is True
+    assert memories.is_vietnamese("cảm ơn bạn nhiều") is True
+    assert memories.is_vietnamese("của tôi") is True
+    assert memories.is_vietnamese("what does this function do?") is False
+    assert memories.is_vietnamese("please fix the build") is False
+
+
+def test_recall_headers_match_query_language(client):
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "Some fact", "type": "fact"}],
+                        project_id=config.DEFAULT_PROJECT)
+    vn = memories.recall(client, embed, "bạn nhớ gì về dự án này không?", recent_turns=0)
+    assert "[Bộ nhớ dài hạn]" in vn["context_block"]
+    assert "[Long-term memories]" not in vn["context_block"]
+
+    en = memories.recall(client, embed, "what do you remember about this project?",
+                         recent_turns=0)
+    assert "[Long-term memories]" in en["context_block"]
+    assert "[Bộ nhớ dài hạn]" not in en["context_block"]
+
+
 def test_recall_includes_docs_only_when_triggered(client):
     embed = FakeEmbed()
     _seed_doc_chunk(client, "File size limit is 10MB per upload.",
@@ -1019,14 +1132,15 @@ def test_recall_includes_docs_only_when_triggered(client):
     triggered = memories.recall(client, embed, "tài liệu spec nói gì về upload?",
                                 project="proj-a", recent_turns=0)
     assert triggered["routing"]["docs"] is True
-    assert "[Project documents]" in triggered["context_block"]
+    # Vietnamese query -> Vietnamese section headers (see memories.is_vietnamese)
+    assert "[Tài liệu dự án]" in triggered["context_block"]
     assert "10MB" in triggered["context_block"]
     assert triggered["documents"][0]["source"] == "upload-spec.md"
 
     untriggered = memories.recall(client, embed, "upload đang lỗi gì?",
                                   project="proj-a", recent_turns=0)
     assert untriggered["routing"]["docs"] is False
-    assert "[Project documents]" not in untriggered["context_block"]
+    assert "[Tài liệu dự án]" not in untriggered["context_block"]
     assert untriggered["documents"] == []
 
 

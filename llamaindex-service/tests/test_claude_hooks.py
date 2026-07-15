@@ -10,6 +10,8 @@ import pytest
 
 import post_llm_call
 import project_catalog
+import stop
+import user_prompt_submit
 from common import _slugify, resolve_project
 from stop import extract_last_turn
 
@@ -37,7 +39,7 @@ def test_extract_simple_turn(tmp_path):
         _user("second question"),
         _assistant([{"type": "text", "text": "second answer"}]),
     ])
-    assert extract_last_turn(p) == ("second question", "second answer")
+    assert extract_last_turn(p) == ("second question", "second answer", "")
 
 
 def test_extract_final_text_wins_over_interim(tmp_path):
@@ -50,7 +52,7 @@ def test_extract_final_text_wins_over_interim(tmp_path):
         _user([{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]),
         _assistant([{"type": "text", "text": "done: the thing works"}]),
     ])
-    assert extract_last_turn(p) == ("do the thing", "done: the thing works")
+    assert extract_last_turn(p) == ("do the thing", "done: the thing works", "")
 
 
 def test_extract_skips_meta_sidechain_and_garbage(tmp_path):
@@ -64,16 +66,65 @@ def test_extract_skips_meta_sidechain_and_garbage(tmp_path):
     # garbage line appended raw
     with open(p, "a") as f:
         f.write("\nnot json at all")
-    assert extract_last_turn(p) == ("real prompt", "real answer")
+    assert extract_last_turn(p) == ("real prompt", "real answer", "")
 
 
 def test_extract_string_content(tmp_path):
     p = _write_transcript(tmp_path / "t.jsonl", [_user("hi"), _assistant("hello!")])
-    assert extract_last_turn(p) == ("hi", "hello!")
+    assert extract_last_turn(p) == ("hi", "hello!", "")
 
 
 def test_extract_missing_file():
-    assert extract_last_turn("/nonexistent/t.jsonl") == ("", "")
+    assert extract_last_turn("/nonexistent/t.jsonl") == ("", "", "")
+
+
+def test_extract_captures_assistant_uuid_as_turn_id(tmp_path):
+    p = _write_transcript(tmp_path / "t.jsonl", [
+        _user("first question"),
+        {**_assistant([{"type": "text", "text": "first answer"}]), "uuid": "uuid-1"},
+        _user("second question"),
+        {**_assistant([{"type": "text", "text": "second answer"}]), "uuid": "uuid-2"},
+    ])
+    assert extract_last_turn(p) == ("second question", "second answer", "uuid-2")
+
+
+def test_main_forwards_transcript_turn_id(tmp_path, monkeypatch):
+    p = _write_transcript(tmp_path / "t.jsonl", [
+        _user("question"),
+        {**_assistant([{"type": "text", "text": "answer"}]), "uuid": "uuid-1"},
+    ])
+    posted = []
+    monkeypatch.setattr(stop, "read_payload", lambda: {
+        "transcript_path": p, "session_id": "s1", "cwd": "/repo",
+    })
+    monkeypatch.setattr(stop, "resolve_project", lambda _cwd: ("repo", "folder"))
+    monkeypatch.setattr(stop, "post_json", lambda _path, body: posted.append(body))
+
+    stop.main()
+
+    assert posted[0]["turn_id"] == "uuid-1"
+
+
+def test_main_clears_turn_id_when_payload_overrides_stale_transcript(tmp_path, monkeypatch):
+    # The transcript's own assistant entry hasn't flushed the real reply yet
+    # (docstring's 2.1.201 case) — last_assistant_message wins, and its
+    # turn_id must NOT be the stale transcript entry's uuid.
+    p = _write_transcript(tmp_path / "t.jsonl", [
+        _user("question"),
+        {**_assistant([{"type": "text", "text": "stale interim text"}]), "uuid": "uuid-stale"},
+    ])
+    posted = []
+    monkeypatch.setattr(stop, "read_payload", lambda: {
+        "transcript_path": p, "session_id": "s1", "cwd": "/repo",
+        "last_assistant_message": "the real final answer",
+    })
+    monkeypatch.setattr(stop, "resolve_project", lambda _cwd: ("repo", "folder"))
+    monkeypatch.setattr(stop, "post_json", lambda _path, body: posted.append(body))
+
+    stop.main()
+
+    assert posted[0]["assistant_response"] == "the real final answer"
+    assert posted[0]["turn_id"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -208,3 +259,14 @@ def test_env_int_malformed_value_falls_back(monkeypatch):
     assert common.env_int("HERMES_TEST_INT", 42) == 42
     monkeypatch.setenv("HERMES_TEST_INT", "7")
     assert common.env_int("HERMES_TEST_INT", 7) == 7
+
+
+# ---------------------------------------------------------------------------
+# user_prompt_submit: wrapper line language must mirror app.memories.is_vietnamese
+# ---------------------------------------------------------------------------
+def test_wrapper_language_regex_matches_common_vietnamese():
+    vn_re = user_prompt_submit._VN_CHARS_RE
+    assert vn_re.search("chào bạn")  # plain-vowel tones (à/ạ) must be caught
+    assert vn_re.search("cảm ơn bạn nhiều")
+    assert vn_re.search("sửa lỗi này giúp tôi")
+    assert not vn_re.search("what does this function do?")

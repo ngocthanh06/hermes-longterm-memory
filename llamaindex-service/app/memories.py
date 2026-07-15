@@ -43,6 +43,24 @@ def is_meta_about_assistant(text: str) -> bool:
     return bool(_META_ABOUT_ASSISTANT_RE.search(text))
 
 
+# The recall context_block's own section headers are literal text injected
+# into every turn's prompt regardless of what language the conversation is
+# actually in — unlike stored facts (whose language follows the session that
+# produced them, per the consolidation prompt), these headers are 100% under
+# our control and 100% guaranteed to appear on every recall. Matching them to
+# the CURRENT query's language removes one deterministic source of English
+# text leaking into an otherwise Vietnamese conversation.
+_VN_CHARS_RE = re.compile(
+    r"[ăâàáảãạằắẳẵặầấẩẫậêèéẻẽẹềếểễệìíỉĩịôơòóỏõọồốổỗộờớởỡợ"
+    r"ưùúủũụừứửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
+)
+
+
+def is_vietnamese(text: str) -> bool:
+    return bool(_VN_CHARS_RE.search(text))
+
+
 def fact_point_id(user_id: str, text: str, project_id: str = "") -> str:
     """Deterministic id per (user, project, normalized text). The project is
     part of the identity: the same sentence can be a distinct fact in two
@@ -193,6 +211,22 @@ def save_facts(
         # grant cross-project authority (a project UI preference is not a
         # global user preference). A genuinely global/default correction may
         # still retire matching project records.
+        #
+        # NOTE (see #10 in review): this intentionally lets a project-scoped
+        # save retire a DEFAULT-scoped fact sharing the same subject+relation
+        # (tests test_triple_default_preference_superseded_from_project and
+        # test_triple_default_project_superseded_from_any_project lock this
+        # in) — subject="user" relations like editor/comment_language really
+        # are meant to be one global value updatable from any project. The
+        # actual gap is that TRIPLE_VOCABULARY (consolidation.py) also lists
+        # inherently PROJECT-scoped attributes (package_manager, database,
+        # framework) under the same subject="user" convention, so two
+        # different projects' independent choices can incorrectly collide
+        # and retire each other. Fixing that needs a vocabulary/prompt
+        # redesign (e.g. project-scoped relations get a project-qualified
+        # subject) plus a backfill of existing triples — not a change to
+        # this scope filter, which already does the right thing for the
+        # relations it was designed around.
         superseded = []
         superseded_ids = []
         triple = _triple_of(fact) if config.TRIPLE_SUPERSEDE else None
@@ -234,31 +268,55 @@ def save_facts(
         # band catches reworded/summarized restatements that score too low on
         # raw cosine to trust blindly (see config.py) — an LLM judges those,
         # and only when one is configured (LLM_PROVIDER=none skips the band).
-        # Scope the supersede search to this fact's project: near-identical
-        # facts in DIFFERENT projects are distinct knowledge, and letting one
-        # retire the other silently loses the other project's memory.
+        # Scope the supersede search to this fact's project PLUS default:
+        # near-identical facts in a DIFFERENT specific project are distinct
+        # knowledge (letting one retire the other would silently lose the
+        # other project's memory), but a genuinely global fact already saved
+        # under "default" must still be found here — otherwise restating the
+        # same standing preference while working in a new project creates an
+        # orphan project-scoped duplicate instead of being recognized as the
+        # same fact (observed: a "reply in Vietnamese" preference duplicated
+        # across projects because this search never looked at "default").
         hits = client.search(
             collection_name=config.MEMORIES_COLLECTION,
             query_vector=vector,
             query_filter=_active_filter(user_id, extra=[
                 qmodels.FieldCondition(
-                    key="project_id", match=qmodels.MatchValue(value=project_id)
+                    key="project_id",
+                    match=(
+                        qmodels.MatchValue(value=project_id)
+                        if project_id == config.DEFAULT_PROJECT
+                        else qmodels.MatchAny(any=[project_id, config.DEFAULT_PROJECT])
+                    ),
                 ),
             ]),
             limit=5,
             score_threshold=config.DEDUP_LLM_CHECK_MIN,
-            with_payload=["text"],
+            with_payload=["text", "project_id"],
         )
         best_relevant = None  # highest-scoring hit NOT judged a duplicate
+        duplicate_of_global = False
         for hit in hits:
             is_dup = hit.score >= config.SUPERSEDE_SIMILARITY or (
                 llm is not None and _llm_confirms_duplicate(llm, text, hit.payload.get("text", ""))
             )
             if is_dup:
+                hit_project = hit.payload.get("project_id") or config.DEFAULT_PROJECT
+                if hit_project == config.DEFAULT_PROJECT and project_id != config.DEFAULT_PROJECT:
+                    # The match is already global; this project-scoped
+                    # restatement must not create a narrower duplicate that
+                    # could shadow it — the default fact already covers
+                    # every project, so treat this as a no-op confirmation.
+                    duplicate_of_global = True
+                    break
                 superseded_ids.append(hit.id)
                 superseded.append(hit.payload.get("text", ""))
             elif best_relevant is None:
                 best_relevant = hit
+
+        if duplicate_of_global:
+            results.append({"text": text, "status": "duplicate_of_global"})
+            continue
 
         # Contradiction detector (third, weakest-signal tier): triple-
         # supersede and the dedup band above already resolve the fact when
@@ -333,14 +391,34 @@ def save_session_summary(
     user_id: str = config.USER_ID,
     project_id: str = config.DEFAULT_PROJECT,
     source_agent: str = "",
+    covers_through: float = 0.0,
 ) -> dict:
     """Store the structured summary of a finished session (goal, decisions,
     unresolved). Lives in the memories collection as type=session_summary but
     is NOT a fact: excluded from fact search/listing, surfaced by recall in
-    place of that session's raw snippets."""
+    place of that session's raw snippets.
+
+    `covers_through` (optional, epoch seconds) is the timestamp of the newest
+    turn this summary actually reflects. A backlog longer than one
+    consolidation pass gets processed newest-chunk-first (see
+    consolidation._covered_points), so a LATER pass over the same session can
+    end up summarizing an OLDER leftover chunk after a fresher one already
+    produced a summary — passing `covers_through` lets that later, older-
+    content pass be skipped instead of regressing the summary backwards in
+    time. Callers that don't track this (e.g. an explicitly provided summary
+    via the MCP save_memories tool) simply omit it and always overwrite, as
+    before."""
     text = (text or "").strip()
     if not text or not session_id:
         return {"status": "skipped"}
+    point_id = summary_point_id(user_id, session_id)
+    if covers_through:
+        existing = client.retrieve(
+            collection_name=config.MEMORIES_COLLECTION, ids=[point_id],
+            with_payload=["covers_through"],
+        )
+        if existing and (existing[0].payload.get("covers_through") or 0) > covers_through:
+            return {"status": "skipped_stale", "session_id": session_id}
     payload = {
         "user_id": user_id,
         "session_id": session_id,
@@ -348,13 +426,14 @@ def save_session_summary(
         "type": "session_summary",
         "text": text,
         "created_at": time.time(),
+        "covers_through": covers_through,
     }
     if source_agent:
         payload["source_agent"] = source_agent
     client.upsert(
         collection_name=config.MEMORIES_COLLECTION,
         points=[qmodels.PointStruct(
-            id=summary_point_id(user_id, session_id),
+            id=point_id,
             vector=hybrid.point_vector(
                 client, config.MEMORIES_COLLECTION,
                 embed_model.get_text_embedding(text), text,
@@ -467,7 +546,7 @@ def search_memories(
         age = max(now - last_seen, 0.0)
         final = e["similarity"] * _decay(age, config.MEMORY_HALF_LIFE_DAYS) * (0.5 + 0.5 * importance)
         hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
-        if scope_policy.boost_same_project(project, hit_project, project_scope):
+        if scope_policy.boost_same_project(project, hit_project, project_scope, config.DEFAULT_PROJECT):
             final *= config.RECALL_PROJECT_BOOST
         if payload.get("type") == "preference":
             # Standing conventions must survive the top-k race against
@@ -981,8 +1060,12 @@ def recall(
     """
     if not project and session_id:
         project = memory_store.get_session_project(client, session_id, user_id)
-        if project == config.DEFAULT_PROJECT:
-            project = ""  # no meaningful project — skip boosting
+        # Keep it as DEFAULT_PROJECT (not ""): scope_policy.filter_projects
+        # still needs a truthy project to apply the strict-scope filter, and
+        # boost_same_project already skips the boost for the default bucket
+        # on its own — blanking it here used to silently disable the FILTER
+        # too, turning every default-project session's "strict" recall into
+        # an unscoped global search.
 
     mems = search_memories(
         client, embed_model, query, user_id, top_k_memories,
@@ -1033,35 +1116,49 @@ def recall(
             if entry.get("conflicts_with") else ""
         )
 
+    # Section headers are the one part of context_block under our full
+    # control, unlike stored facts/history (whose language follows whatever
+    # the original session was in) — match them to the query's language so
+    # they don't inject a deterministic dose of English into an otherwise
+    # Vietnamese conversation on every single turn.
+    vn = is_vietnamese(query)
+    headers = {
+        "memories": "[Bộ nhớ dài hạn]" if vn else "[Long-term memories]",
+        "summaries": "[Tóm tắt các phiên trước liên quan]" if vn else "[Session summaries (related past sessions)]",
+        "history": "[Hội thoại trước liên quan]" if vn else "[Related past conversations]",
+        "docs": "[Tài liệu dự án]" if vn else "[Project documents]",
+        "recent": "[Các lượt gần nhất trong phiên này]" if vn else "[Most recent turns in this session]",
+    }
+
     lines: list[str] = []
     if mems:
-        lines.append("[Long-term memories]")
+        lines.append(headers["memories"])
         lines += [
             f"- ({m['type']}, {_fmt_date(m['created_at'])}{_agent(m)}) {m['text']}{_conflict(m)}"
             for m in mems
         ]
     if summaries:
-        lines.append("[Session summaries (related past sessions)]")
+        lines.append(headers["summaries"])
         lines += [
             f"- ({sid}, {_fmt_date(s['created_at'])}{_agent(s)}) {s['text'][:500]}"
             for sid, s in summaries.items()
         ]
     raw_history = [h for h in history if h["session_id"] not in summaries]
     if raw_history:
-        lines.append("[Related past conversations]")
+        lines.append(headers["history"])
         lines += [
             f"- ({h['session_id']}, {_fmt_date(h['timestamp'])}{_agent(h)}) "
             f"{h['role']}: {h['content'][:300]}"
             for h in raw_history
         ]
     if docs:
-        lines.append("[Project documents]")
+        lines.append(headers["docs"])
         lines += [
             f"- ({d['source']}) {d['text'][:config.RECALL_DOC_SNIPPET_CHARS]}"
             for d in docs
         ]
     if recent:
-        lines.append("[Most recent turns in this session]")
+        lines.append(headers["recent"])
         lines += [f"- {t['role']}: {t['content'][:300]}" for t in recent]
 
     return {

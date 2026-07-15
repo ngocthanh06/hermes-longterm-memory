@@ -1,10 +1,22 @@
 """Episodic memory (L2): raw conversation turns in Qdrant.
 
 Every user/assistant message is embedded and upserted with a deterministic
-point id derived from (user, session, role, content), so hook retries and
-replays are idempotent. Turns are retrieved two ways: chronologically per
-session (to rebuild the working buffer) and semantically across sessions
-(long-term recall of past conversations).
+point id. The reliable path: a caller-supplied `turn_id` (a stable per-turn
+identifier — Claude Code's transcript entry uuid, Codex's own turn_id) makes
+the id a pure function of (user, session, role, turn_id), so a retry is
+always exactly identifiable regardless of content or session state.
+
+Without one, content+session-state alone cannot distinguish "retry" from
+"new occurrence" in every case: several heuristic refinements (excluding a
+same-call sibling, anchoring on the most recent OTHER point) each closed one
+gap only for a new adversarial case to surface — e.g. a session that only
+ever alternates between the same two fixed strings collapses every anchor
+to the same fallback, since excluding "this content and its sibling" then
+excludes everything the session has ever contained. This fallback happens
+to catch most real hook retries (which arrive within one call, before
+anything else is recorded) and is kept for callers that don't supply a
+turn_id yet, but it is not airtight — pass turn_id whenever the caller has
+one.
 """
 
 import hashlib
@@ -20,9 +32,21 @@ from app import config, hybrid, qdrant_setup, scope_policy
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 
-def message_point_id(user_id: str, session_id: str, role: str, content: str) -> str:
+def message_point_id(
+    user_id: str, session_id: str, role: str, content: str,
+    disambiguator: str = "", turn_id: str = "",
+) -> str:
+    if turn_id:
+        # A real idempotency key fully identifies this logical turn — the
+        # id no longer depends on content at all, so even a corrected retry
+        # (same turn, slightly different text) still lands on the same
+        # point instead of the content-hash path's inherent ambiguity.
+        return str(uuid.uuid5(_NAMESPACE, f"msg:{user_id}:{session_id}:{role}:turn:{turn_id}"))
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    return str(uuid.uuid5(_NAMESPACE, f"msg:{user_id}:{session_id}:{role}:{digest}"))
+    key = f"msg:{user_id}:{session_id}:{role}:{digest}"
+    if disambiguator:
+        key += f":{disambiguator}"
+    return str(uuid.uuid5(_NAMESPACE, key))
 
 
 def _user_filter(user_id: str, extra: list | None = None) -> qmodels.Filter:
@@ -34,6 +58,57 @@ def _user_filter(user_id: str, extra: list | None = None) -> qmodels.Filter:
     return qmodels.Filter(must=must)
 
 
+def _scroll_all(
+    client: QdrantClient, collection: str, flt: qmodels.Filter,
+    with_payload, page_size: int,
+) -> list:
+    """Scroll every point matching `flt`, paging on `offset` until exhausted.
+    A single scroll() call only returns up to `limit` points in point-ID
+    order (unrelated to timestamp for our hash-derived ids) — for a session
+    with more turns than that, treating that one page as "the" turns silently
+    picks an arbitrary subset instead of the earliest/most-recent ones."""
+    points: list = []
+    offset = None
+    while True:
+        batch, offset = client.scroll(
+            collection_name=collection,
+            scroll_filter=flt,
+            limit=page_size,
+            offset=offset,
+            with_payload=with_payload,
+            with_vectors=False,
+        )
+        points.extend(batch)
+        if offset is None:
+            break
+    return points
+
+
+def _recent_points(
+    client: QdrantClient, collection: str, flt: qmodels.Filter,
+    with_payload, limit: int, ascending: bool = False,
+) -> list:
+    """Fetch up to `limit` points ordered by `timestamp` directly from
+    Qdrant (native order_by, backed by the existing timestamp payload
+    index) — the newest `limit` by default, or the oldest when `ascending`.
+    Used where only one end of a session's history is needed (the founding
+    turn, or the last few turns): cheaper than _scroll_all's full-session
+    pagination, which is only necessary when every matching point is
+    actually required (e.g. the unconsolidated backlog)."""
+    points, _ = client.scroll(
+        collection_name=collection,
+        scroll_filter=flt,
+        order_by=qmodels.OrderBy(
+            key="timestamp",
+            direction=qmodels.Direction.ASC if ascending else qmodels.Direction.DESC,
+        ),
+        limit=limit,
+        with_payload=with_payload,
+        with_vectors=False,
+    )
+    return points
+
+
 def add_message(
     client: QdrantClient,
     embed_model,
@@ -43,17 +118,143 @@ def add_message(
     user_id: str = config.USER_ID,
     project_id: str = config.DEFAULT_PROJECT,
     source_agent: str = "",
+    sibling_content: str = "",
+    turn_id: str = "",
 ) -> str:
-    vector = embed_model.get_text_embedding(content)
+    now = time.time()
+    consolidated = False
+
+    if turn_id:
+        # A real idempotency key sidesteps content/session-state heuristics
+        # entirely — the id is deterministic on its own, so a retry always
+        # finds (and only ever finds) this exact point.
+        point_id = message_point_id(user_id, session_id, role, content, turn_id=turn_id)
+        existing = client.retrieve(
+            collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
+            with_payload=["consolidated"],
+        )
+        if existing:
+            consolidated = bool(existing[0].payload.get("consolidated"))
+        vector = embed_model.get_text_embedding(content)
+        payload = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "project_id": project_id or config.DEFAULT_PROJECT,
+            "role": role,
+            "content": content,
+            "timestamp": now,
+            "consolidated": consolidated,
+            "turn_id": turn_id,
+        }
+        if source_agent:
+            payload["source_agent"] = source_agent
+        client.upsert(
+            collection_name=config.CHAT_HISTORY_COLLECTION,
+            points=[qmodels.PointStruct(
+                id=point_id,
+                vector=hybrid.point_vector(client, config.CHAT_HISTORY_COLLECTION, vector, content),
+                payload=payload,
+            )],
+        )
+        qdrant_setup.touch_meta(client)
+        return point_id
+
     point_id = message_point_id(user_id, session_id, role, content)
+    existing = client.retrieve(
+        collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
+        with_payload=["timestamp", "consolidated"],
+    )
+    if existing:
+        prev_ts = existing[0].payload.get("timestamp") or 0
+        # A fixed time window can't tell a slow retry (still the SAME turn,
+        # arriving late) apart from a genuine repeat (a new occurrence of
+        # identical content) — both look identical from content+elapsed time
+        # alone. What actually distinguishes them: a retry of this exact turn
+        # cannot be followed by any OTHER turn yet (the hook only fires once
+        # a turn completes, so nothing new can have been recorded for this
+        # session in between two attempts at writing the same one). If the
+        # session has moved on since the existing point was written, this
+        # match is a genuine new occurrence, not a retry.
+        #
+        # A caller writes a user+assistant PAIR per call (one /memory/append
+        # = one turn), so a retry of that call rewrites BOTH messages, each
+        # moments after the other. Without excluding the sibling, checking
+        # the user message would see the (just-written-first-time) assistant
+        # reply as "newer activity" and wrongly conclude the session moved
+        # on — and symmetrically for the assistant message seeing the
+        # sibling user retry. Excluding content matching the sibling from
+        # the count fixes this: it no longer counts as evidence the session
+        # progressed, while a genuine repeat's PRIOR turn still has a
+        # different sibling reply, so it still counts correctly.
+        must_not = (
+            [qmodels.FieldCondition(key="content", match=qmodels.MatchValue(value=sibling_content))]
+            if sibling_content else None
+        )
+        flt = _user_filter(user_id, [
+            qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id)),
+            qmodels.FieldCondition(key="timestamp", range=qmodels.Range(gt=prev_ts)),
+        ])
+        if must_not:
+            flt.must_not = must_not
+        newer_activity = client.count(
+            collection_name=config.CHAT_HISTORY_COLLECTION, count_filter=flt, exact=True,
+        ).count
+        if newer_activity:
+            # A genuine repeat needs a disambiguated id — but str(now) made
+            # that id itself non-deterministic, so a RETRY of THIS repeat
+            # (occurrence 2+) could never land on the same id twice and kept
+            # generating fresh duplicates on every retry. Anchor the
+            # disambiguator on the id of the most recent OTHER point in the
+            # session instead (excluding this content and the sibling's, so
+            # this call's own pair never anchors on itself): a retry of the
+            # same occurrence always arrives with the exact same "nothing
+            # else happened since" state, so it recomputes the identical
+            # anchor and lands back on the identical id — while a genuinely
+            # later occurrence has a different (newer) anchor and gets its
+            # own distinct id.
+            exclude_contents = {content}
+            if sibling_content:
+                exclude_contents.add(sibling_content)
+            anchor_flt = _user_filter(
+                user_id,
+                [qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id))],
+            )
+            anchor_flt.must_not = [
+                qmodels.FieldCondition(key="content", match=qmodels.MatchValue(value=c))
+                for c in exclude_contents
+            ]
+            anchor_points = _recent_points(
+                client, config.CHAT_HISTORY_COLLECTION, anchor_flt,
+                with_payload=False, limit=1,
+            )
+            anchor_key = str(anchor_points[0].id) if anchor_points else "genesis"
+            point_id = message_point_id(user_id, session_id, role, content, disambiguator=anchor_key)
+            existing = client.retrieve(
+                collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
+                with_payload=["consolidated"],
+            )
+            # Same preservation rule as the base-id retry case below: this
+            # anchor-derived id being already present means a retry of this
+            # exact occurrence, not a new one (a genuinely new occurrence
+            # would anchor on a different, newer point).
+            consolidated = bool(existing[0].payload.get("consolidated")) if existing else False
+        else:
+            # A genuine retry reuses the SAME point id, so this upsert would
+            # otherwise silently reset an already-consolidated turn back to
+            # pending — reopening it for the next sweep and re-spending an
+            # LLM call on content already processed. Preserve whatever
+            # consolidated status the existing point already has instead.
+            consolidated = bool(existing[0].payload.get("consolidated"))
+
+    vector = embed_model.get_text_embedding(content)
     payload = {
         "user_id": user_id,
         "session_id": session_id,
         "project_id": project_id or config.DEFAULT_PROJECT,
         "role": role,
         "content": content,
-        "timestamp": time.time(),
-        "consolidated": False,
+        "timestamp": now,
+        "consolidated": consolidated,
     }
     if source_agent:
         payload["source_agent"] = source_agent
@@ -81,19 +282,16 @@ def get_session_project(
     The EARLIEST turn wins, deterministically: a resumed session keeps its
     founding project even if later turns were written while the sidebar
     pointed elsewhere. Sessions with no stored turns return `fallback`."""
-    points, _ = client.scroll(
-        collection_name=config.CHAT_HISTORY_COLLECTION,
-        scroll_filter=_user_filter(
+    points = _recent_points(
+        client, config.CHAT_HISTORY_COLLECTION,
+        _user_filter(
             user_id,
             [qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id))],
         ),
-        limit=config.CHAT_HISTORY_MAX_MESSAGES,
-        with_payload=["project_id", "timestamp"],
-        with_vectors=False,
+        with_payload=["project_id"], limit=1, ascending=True,
     )
     if not points:
         return fallback
-    points.sort(key=lambda p: p.payload.get("timestamp") or 0)
     return points[0].payload.get("project_id") or fallback
 
 
@@ -172,17 +370,19 @@ def rename_project(client: QdrantClient, old: str, new: str,
 def _session_points(
     client: QdrantClient, session_id: str, user_id: str, limit: int
 ) -> list:
-    points, _ = client.scroll(
-        collection_name=config.CHAT_HISTORY_COLLECTION,
-        scroll_filter=_user_filter(
+    """The newest `limit` turns of a session, in chronological order. Fetched
+    directly via order_by rather than paginating the whole session — a
+    session much longer than `limit` would otherwise cost one Qdrant
+    round-trip per page just to read off the tail end."""
+    points = _recent_points(
+        client, config.CHAT_HISTORY_COLLECTION,
+        _user_filter(
             user_id,
             [qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id))],
         ),
-        limit=limit,
-        with_payload=True,
-        with_vectors=False,
+        with_payload=True, limit=limit,
     )
-    points.sort(key=lambda p: p.payload.get("timestamp", 0))
+    points.reverse()  # _recent_points is newest-first; callers want chronological order
     return points
 
 
@@ -207,11 +407,14 @@ def get_recent_turns(
 ) -> list[dict]:
     if limit <= 0:
         return []  # points[-0:] would be the WHOLE session, not none
-    points = _session_points(client, session_id, user_id, config.CHAT_HISTORY_MAX_MESSAGES)
+    # Fetches exactly the last `limit` turns directly — called on every
+    # recall(), so this stays O(1) in the session's length instead of
+    # scanning up to CHAT_HISTORY_MAX_MESSAGES turns just to keep the tail.
+    points = _session_points(client, session_id, user_id, limit)
     return [
         {"role": p.payload["role"], "content": p.payload["content"],
          "timestamp": p.payload.get("timestamp")}
-        for p in points[-limit:]
+        for p in points
     ]
 
 
@@ -264,7 +467,7 @@ def search_history(
         payload = e["payload"]
         hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
         score = e["similarity"]
-        if scope_policy.boost_same_project(project, hit_project, project_scope):
+        if scope_policy.boost_same_project(project, hit_project, project_scope, config.DEFAULT_PROJECT):
             score *= config.RECALL_PROJECT_BOOST
         results.append(
             {
@@ -284,18 +487,17 @@ def search_history(
 def fetch_unconsolidated(
     client: QdrantClient, session_id: str, user_id: str = config.USER_ID
 ) -> list:
-    points, _ = client.scroll(
-        collection_name=config.CHAT_HISTORY_COLLECTION,
-        scroll_filter=_user_filter(
+    points = _scroll_all(
+        client, config.CHAT_HISTORY_COLLECTION,
+        _user_filter(
             user_id,
             [
                 qmodels.FieldCondition(key="session_id", match=qmodels.MatchValue(value=session_id)),
                 qmodels.FieldCondition(key="consolidated", match=qmodels.MatchValue(value=False)),
             ],
         ),
-        limit=config.CHAT_HISTORY_MAX_MESSAGES,
         with_payload=True,
-        with_vectors=False,
+        page_size=config.CHAT_HISTORY_MAX_MESSAGES,
     )
     points.sort(key=lambda p: p.payload.get("timestamp", 0))
     return points

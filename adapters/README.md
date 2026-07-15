@@ -93,13 +93,25 @@ POST /memory/append
   "assistant_response": "<the final response text>",
   "project_id":         "<slug>",
   "project_source":     "folder",
-  "source_agent":       "<your-agent-name>"
+  "source_agent":       "<your-agent-name>",
+  "turn_id":            "<optional but recommended — see below>"
 }
 ```
 
-One call per finished turn. Idempotent — point ids are deterministic,
-retries are safe. `project_source: "folder"` marks the slug as a genuine
-workspace signal so the server's session-stickiness override applies.
+One call per finished turn. `project_source: "folder"` marks the slug as a
+genuine workspace signal so the server's session-stickiness override
+applies.
+
+**Idempotency and `turn_id`.** Pass a stable per-turn id from your own
+agent if it has one (a transcript entry id, an event id — anything that
+identifies this exact turn and is the same across a retry). With it, a
+retry is always exactly identifiable and safe, no matter how much content
+repeats. Without one, the service falls back to a content/session-state
+heuristic that covers ordinary hook retries but is **not airtight**: a
+session that repeats the same handful of exchanges can, in rare cases,
+have one occurrence overwrite another. If your agent has no natural turn
+id, this endpoint is best-effort for you, not strictly idempotent —
+don't rely on retry-safety without one.
 
 ### 3. session end — consolidate
 

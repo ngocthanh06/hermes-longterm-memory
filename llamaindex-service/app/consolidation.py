@@ -86,12 +86,20 @@ conversation, covering (a) what the session was trying to achieve, (b) the
 key decisions or outcomes, and (c) anything left unresolved. It is shown
 when future conversations reference this session, so keep it self-contained.
 For sessions with no real content, use an empty string.
-%(triple_section)sReturn ONLY a JSON object (no prose, no code fences):
+
+Example — given a transcript containing "I switched the project to bun
+instead of pnpm":
+{{"facts": [{{"text": "Project uses bun instead of pnpm", "type": "fact", "importance": 0.7%(example_triple)s}}], "summary": "Session covered switching the project's package manager."}}
+
+%(triple_section)sReturn ONLY a JSON object (no prose, no code fences) with
+EXACTLY these top-level keys — no extra keys, no renamed keys:
 {{"facts": [{{"text": "...", "type": "fact|preference|decision|task", "importance": 0.0-1.0%(triple_keys)s}}], "summary": "..."}}""" % {
     # %-substituted once at import so the {max_facts} .format() placeholder
     # and the {{ }} JSON braces stay untouched.
     "triple_section": _TRIPLE_SECTION if config.TRIPLE_SUPERSEDE else "\n",
     "triple_keys": ', "subject": "...", "relation": "...", "object": "..."'
+    if config.TRIPLE_SUPERSEDE else "",
+    "example_triple": ', "subject": "user", "relation": "package_manager", "object": "bun"'
     if config.TRIPLE_SUPERSEDE else "",
 }
 
@@ -113,18 +121,49 @@ def pop_handout(session_id: str) -> list:
     return _pending_handouts.pop(session_id, [])
 
 
+def _line_for(p, cap: int = MAX_TRANSCRIPT_CHARS) -> str:
+    """A single point's transcript line, hard-capped at `cap` characters.
+    Without this, one oversized message alone (e.g. a huge pasted log)
+    could exceed MAX_TRANSCRIPT_CHARS by itself — _covered_points always
+    keeps at least the single newest point to guarantee forward progress,
+    so that point's own size must be bounded too, or the "cap" on prompt
+    size isn't actually a cap, and a too-large completion call would keep
+    failing identically on every retry."""
+    content = p.payload["content"]
+    if len(content) > cap:
+        content = content[:cap] + "...[content truncated]"
+    return f"{p.payload['role']}: {content}"
+
+
+def _covered_points(points: list) -> list:
+    """The newest-first-selected prefix of `points` that transcript_from_points
+    actually keeps when truncating (same budget, same accumulation order) —
+    used so a caller can mark consolidated only the points the LLM actually
+    saw. Without this, a backlog longer than MAX_TRANSCRIPT_CHARS would have
+    its oldest (truncated-out) turns marked consolidated anyway, discarding
+    them without the LLM ever having analyzed them."""
+    lines = [_line_for(p) for p in points]
+    if len("\n".join(lines)) <= MAX_TRANSCRIPT_CHARS:
+        return points
+    kept: list = []
+    total = 0
+    for p, line in zip(reversed(points), reversed(lines)):  # newest turns carry the decisions
+        if kept and total + len(line) > MAX_TRANSCRIPT_CHARS:
+            # Always keep at least the single newest point (even if it alone
+            # exceeds the budget) so a session can never get permanently
+            # stuck making zero progress.
+            break
+        kept.append(p)
+        total += len(line)
+    return list(reversed(kept))
+
+
 def transcript_from_points(points: list) -> str:
-    lines = [f"{p.payload['role']}: {p.payload['content']}" for p in points]
+    covered = _covered_points(points)
+    lines = [_line_for(p) for p in covered]
     transcript = "\n".join(lines)
-    if len(transcript) > MAX_TRANSCRIPT_CHARS:
-        kept: list[str] = []
-        total = 0
-        for line in reversed(lines):  # newest turns carry the decisions
-            if total + len(line) > MAX_TRANSCRIPT_CHARS:
-                break
-            kept.append(line)
-            total += len(line)
-        transcript = "[...beginning of conversation truncated...]\n" + "\n".join(reversed(kept))
+    if len(covered) < len(points):
+        transcript = "[...beginning of conversation truncated...]\n" + transcript
     return transcript
 
 
@@ -152,9 +191,14 @@ def _parse_extraction(raw: str) -> dict | None:
         return None
     if isinstance(parsed, list):  # legacy array-only format
         parsed = {"facts": parsed, "summary": ""}
-    if not isinstance(parsed, dict):
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("facts"), list):
+        # A dict without a "facts" list — missing entirely, or present but
+        # wrong-typed (e.g. the model emitted "facts": "none") — is a schema
+        # mismatch, not a valid empty extraction: treat it as a parse failure
+        # so the session is retried instead of the turns being marked
+        # consolidated with zero facts saved.
         return None
-    facts = [f for f in (parsed.get("facts") or []) if isinstance(f, dict) and f.get("text")]
+    facts = [f for f in parsed["facts"] if isinstance(f, dict) and f.get("text")]
     summary = parsed.get("summary")
     return {"facts": facts, "summary": summary if isinstance(summary, str) else ""}
 
@@ -212,10 +256,22 @@ def consolidate_session(
         client, embed_model, extraction["facts"], user_id, session_id,
         project_id=project_id, source_agent=source_agent, llm=llm,
     )
+    # Mark consolidated only the points transcript_from_points actually kept
+    # (see _covered_points) — a backlog longer than MAX_TRANSCRIPT_CHARS has
+    # its oldest turns truncated out of what the LLM saw, and those must
+    # stay unconsolidated for the next pass instead of being silently
+    # discarded as if they'd been analyzed.
+    covered_points = _covered_points(points)
+    # A backlog spanning multiple passes is processed newest-chunk-first, so
+    # a LATER pass covers OLDER leftover material than an earlier pass did —
+    # covers_through lets save_session_summary refuse to regress the summary
+    # backwards in time when that happens.
+    covers_through = max((p.payload.get("timestamp") or 0 for p in covered_points), default=0)
     memories.save_session_summary(
         client, embed_model, session_id, extraction["summary"],
         user_id=user_id, project_id=project_id, source_agent=source_agent,
+        covers_through=covers_through,
     )
-    memory_store.mark_consolidated(client, [p.id for p in points])
-    return {"status": "ok", "turns_processed": len(points), "project": project_id,
+    memory_store.mark_consolidated(client, [p.id for p in covered_points])
+    return {"status": "ok", "turns_processed": len(covered_points), "project": project_id,
             "facts": saved, "summary_saved": bool(extraction["summary"].strip())}

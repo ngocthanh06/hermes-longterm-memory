@@ -104,6 +104,10 @@ class MemoryAppendRequest(BaseModel):
     project_id: str = config.DEFAULT_PROJECT  # hook resolves from Hermes sidebar via cwd
     project_source: str = ""  # "folder" | "active" | "default" — how the hook resolved it
     source_agent: str = ""  # "hermes" | "claude-code" | … — which agent produced the turn
+    # Optional caller-supplied idempotency key (e.g. Claude Code's transcript
+    # entry uuid, Codex's own turn_id) — see memory_store.add_message. Falls
+    # back to the content/session-state heuristic when omitted.
+    turn_id: str = ""
 
 
 class RecallRequest(BaseModel):
@@ -203,9 +207,14 @@ async def ingest_file(
             f.write(await file.read())
         stored = documents.store_original(tmp_path, file.filename)
 
+    # An explicit empty string (as opposed to omitting the form field) must
+    # still mean "default", matching ingest_file's own normalization below —
+    # otherwise the dedup check ahead would skip the project filter entirely
+    # and could match another project's file as a false-positive duplicate.
+    project_id = project_id or config.DEFAULT_PROJECT
     parsed_metadata.setdefault("source", file.filename)
     parsed_metadata["stored_path"] = str(stored)
-    if documents.already_ingested(state["qdrant_client"], str(stored)):
+    if documents.already_ingested(state["qdrant_client"], str(stored), project_id):
         return IngestResponse(
             status="skipped_duplicate",
             total_chunks_indexed=documents.point_count(state["qdrant_client"]),
@@ -240,7 +249,7 @@ def query(payload: QueryRequest):
 # Memory (L2 + L3)
 # ---------------------------------------------------------------------------
 @app.post("/memory/append")
-def memory_append(payload: MemoryAppendRequest):
+def memory_append(payload: MemoryAppendRequest, background_tasks: BackgroundTasks):
     """Persist a completed turn into episodic memory (no LLM call).
 
     Called from the Hermes `post_llm_call` hook so every conversation lands
@@ -257,15 +266,25 @@ def memory_append(payload: MemoryAppendRequest):
         memory_store.add_message(
             client, embed, payload.session_id, "user", payload.user_message,
             project_id=project_id, source_agent=payload.source_agent,
+            sibling_content=payload.assistant_response, turn_id=payload.turn_id,
         )
         appended += 1
     if payload.assistant_response.strip():
         memory_store.add_message(
             client, embed, payload.session_id, "assistant", payload.assistant_response,
             project_id=project_id, source_agent=payload.source_agent,
+            sibling_content=payload.user_message, turn_id=payload.turn_id,
         )
         appended += 1
     meta = qdrant_setup.get_meta(client) or {}
+    # CONSOLIDATION_FORCE_TURNS only makes a continuously-active session
+    # ELIGIBLE for the next sweep — without a trigger here, nothing actually
+    # runs one until the session ends, a new session starts, or the service
+    # reboots. Every append attempts the debounced sweep check (cheap: a
+    # lock + time comparison when it's not yet due) so a long-running
+    # session's backlog gets flushed within one debounce window of crossing
+    # the threshold, not indefinitely.
+    background_tasks.add_task(scheduler.run_sweep_if_due, state)
     return {"status": "ok", "appended": appended, "project": project_id,
             "last_written_at": meta.get("last_written_at")}
 
