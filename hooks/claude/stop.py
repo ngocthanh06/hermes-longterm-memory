@@ -9,8 +9,10 @@ the Claude Code counterpart of the Hermes post_llm_call hook.
 The transcript JSONL format is internal to Claude Code and can change
 between releases, so parsing is defensive: unknown lines are skipped, and
 an empty extraction is silently dropped (the raw payload is still in
-logs/claude-hook-debug.jsonl for diagnosis). Deterministic point ids on the
-service side make re-posting idempotent. Best-effort throughout.
+logs/claude-hook-debug.jsonl for diagnosis). The final assistant transcript
+entry's own uuid is passed along as turn_id, a real idempotency key the
+service uses instead of guessing retry-vs-new-occurrence from content and
+session state alone. Best-effort throughout.
 """
 
 import json
@@ -41,14 +43,19 @@ def _is_tool_result(content) -> bool:
 
 
 def extract_last_turn(transcript_path: str) -> tuple:
-    """(user_message, assistant_response) of the LAST completed turn.
+    """(user_message, assistant_response, assistant_uuid) of the LAST
+    completed turn.
 
     A turn = the last real user prompt (not a tool result, not meta, not a
     sidechain) and the final assistant text after it — later assistant
     entries overwrite earlier ones, so text emitted between tool calls
-    doesn't shadow the closing reply.
+    doesn't shadow the closing reply. `assistant_uuid` is that final
+    assistant entry's own transcript uuid — a stable per-turn idempotency
+    key (see memory_store.add_message's turn_id) as long as this exact
+    entry is what actually gets recorded; main() clears it when the
+    fresher payload override applies instead (see there).
     """
-    last_user, last_assistant = "", ""
+    last_user, last_assistant, last_assistant_uuid = "", "", ""
     try:
         with open(transcript_path, encoding="utf-8") as f:
             for line in f:
@@ -65,14 +72,15 @@ def extract_last_turn(transcript_path: str) -> tuple:
                         continue
                     text = _text_of(content)
                     if text.strip():
-                        last_user, last_assistant = text, ""
+                        last_user, last_assistant, last_assistant_uuid = text, "", ""
                 elif entry.get("type") == "assistant":
                     text = _text_of(content)
                     if text.strip():
                         last_assistant = text
+                        last_assistant_uuid = str(entry.get("uuid") or "")
     except OSError:
-        return "", ""
-    return last_user, last_assistant
+        return "", "", ""
+    return last_user, last_assistant, last_assistant_uuid
 
 
 def main():
@@ -82,13 +90,19 @@ def main():
     if not transcript_path or not session_id:
         return
 
-    user_message, assistant_response = extract_last_turn(transcript_path)
+    user_message, assistant_response, turn_id = extract_last_turn(transcript_path)
     # The transcript may not have flushed the closing reply yet when Stop
     # fires (observed on 2.1.201: the assistant entry landed after the hook
-    # ran) — the payload's own last_assistant_message is authoritative.
+    # ran) — the payload's own last_assistant_message is authoritative. When
+    # that override actually changes the text, the transcript-derived
+    # turn_id no longer identifies what's being sent (it's the OLD entry's
+    # uuid, if any) — drop it and let add_message's heuristic fallback
+    # handle idempotency for this narrower case instead of risking a
+    # mismatched id.
     payload_reply = payload.get("last_assistant_message")
-    if isinstance(payload_reply, str) and payload_reply.strip():
+    if isinstance(payload_reply, str) and payload_reply.strip() and payload_reply != assistant_response:
         assistant_response = payload_reply
+        turn_id = ""
     if not user_message and not assistant_response:
         return
 
@@ -100,6 +114,7 @@ def main():
         "project_id": project_id,
         "project_source": project_source,
         "source_agent": "claude-code",
+        "turn_id": turn_id,
     })
 
 

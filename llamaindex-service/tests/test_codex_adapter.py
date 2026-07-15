@@ -317,6 +317,7 @@ def test_lifecycle_stop_records_pending_turn(monkeypatch, capsys):
     assert posted[0][1]["user_message"] == "question"
     assert posted[0][1]["assistant_response"] == "final answer"
     assert posted[0][1]["source_agent"] == "codex"
+    assert posted[0][1]["turn_id"] == "t1"
     assert removed == [("s1", "t1")]
 
 

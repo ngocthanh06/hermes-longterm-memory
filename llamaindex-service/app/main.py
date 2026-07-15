@@ -104,6 +104,10 @@ class MemoryAppendRequest(BaseModel):
     project_id: str = config.DEFAULT_PROJECT  # hook resolves from Hermes sidebar via cwd
     project_source: str = ""  # "folder" | "active" | "default" — how the hook resolved it
     source_agent: str = ""  # "hermes" | "claude-code" | … — which agent produced the turn
+    # Optional caller-supplied idempotency key (e.g. Claude Code's transcript
+    # entry uuid, Codex's own turn_id) — see memory_store.add_message. Falls
+    # back to the content/session-state heuristic when omitted.
+    turn_id: str = ""
 
 
 class RecallRequest(BaseModel):
@@ -262,14 +266,14 @@ def memory_append(payload: MemoryAppendRequest, background_tasks: BackgroundTask
         memory_store.add_message(
             client, embed, payload.session_id, "user", payload.user_message,
             project_id=project_id, source_agent=payload.source_agent,
-            sibling_content=payload.assistant_response,
+            sibling_content=payload.assistant_response, turn_id=payload.turn_id,
         )
         appended += 1
     if payload.assistant_response.strip():
         memory_store.add_message(
             client, embed, payload.session_id, "assistant", payload.assistant_response,
             project_id=project_id, source_agent=payload.source_agent,
-            sibling_content=payload.user_message,
+            sibling_content=payload.user_message, turn_id=payload.turn_id,
         )
         appended += 1
     meta = qdrant_setup.get_meta(client) or {}

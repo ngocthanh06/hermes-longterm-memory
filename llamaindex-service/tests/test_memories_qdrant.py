@@ -583,6 +583,56 @@ def test_add_message_retry_of_second_occurrence_is_idempotent(client):
     assert after == before
 
 
+def test_add_message_alternating_content_without_turn_id_can_collide(client):
+    """Documents a known residual gap in the content/session-state heuristic
+    (no turn_id supplied): a session that only ever alternates between the
+    same two fixed strings collapses every anchor to the same fallback,
+    since excluding "this content and its sibling" excludes everything the
+    session has ever contained. A/B, B/A, A/B, B/A, A/B should be 5 distinct
+    turns (10 points) but the 5th collides with the 3rd without a turn_id."""
+    embed = FakeEmbed()
+
+    def pair(u, a):
+        memory_store.add_message(client, embed, "s1", "user", u, sibling_content=a)
+        memory_store.add_message(client, embed, "s1", "assistant", a, sibling_content=u)
+
+    pair("A", "B")
+    pair("B", "A")
+    pair("A", "B")
+    pair("B", "A")
+    pair("A", "B")
+
+    count = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+    assert count == 8  # would be 10 with a real turn_id — see the test below
+
+
+def test_add_message_alternating_content_with_turn_id_is_correct(client):
+    """The same alternating-content scenario, but with a real turn_id per
+    call (as /memory/append now forwards from Claude Code's transcript uuid
+    or Codex's own turn_id) — no collision, every occurrence gets its own
+    point regardless of content repeating."""
+    embed = FakeEmbed()
+
+    def pair(u, a, turn):
+        memory_store.add_message(client, embed, "s1", "user", u, sibling_content=a, turn_id=turn)
+        memory_store.add_message(client, embed, "s1", "assistant", a, sibling_content=u, turn_id=turn)
+
+    pair("A", "B", "t1")
+    pair("B", "A", "t2")
+    pair("A", "B", "t3")
+    pair("B", "A", "t4")
+    pair("A", "B", "t5")
+
+    count = client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count
+    assert count == 10
+
+    # A retry of an earlier turn (same turn_id) stays idempotent even though
+    # its content is identical to a later, distinct turn.
+    memory_store.add_message(client, embed, "s1", "user", "A", sibling_content="B", turn_id="t1")
+    memory_store.add_message(client, embed, "s1", "assistant", "B", sibling_content="A", turn_id="t1")
+    assert client.count(config.CHAT_HISTORY_COLLECTION, exact=True).count == 10
+
+
 def test_mark_consolidated_roundtrip(client):
     embed = FakeEmbed()
     memory_store.add_message(client, embed, "s1", "user", "hello")

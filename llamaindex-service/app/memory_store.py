@@ -1,14 +1,22 @@
 """Episodic memory (L2): raw conversation turns in Qdrant.
 
 Every user/assistant message is embedded and upserted with a deterministic
-point id derived from (user, session, role, content), so hook retries and
-replays are idempotent — a repeat of identical content with no OTHER turn
-recorded since is treated as a retry of the same turn. A repeat that arrives
-after the session has recorded further activity (a genuinely new occurrence,
-not a retry) gets a disambiguated id instead of overwriting the earlier
-message. Turns are retrieved two ways: chronologically per session (to
-rebuild the working buffer) and semantically across sessions (long-term
-recall of past conversations).
+point id. The reliable path: a caller-supplied `turn_id` (a stable per-turn
+identifier — Claude Code's transcript entry uuid, Codex's own turn_id) makes
+the id a pure function of (user, session, role, turn_id), so a retry is
+always exactly identifiable regardless of content or session state.
+
+Without one, content+session-state alone cannot distinguish "retry" from
+"new occurrence" in every case: several heuristic refinements (excluding a
+same-call sibling, anchoring on the most recent OTHER point) each closed one
+gap only for a new adversarial case to surface — e.g. a session that only
+ever alternates between the same two fixed strings collapses every anchor
+to the same fallback, since excluding "this content and its sibling" then
+excludes everything the session has ever contained. This fallback happens
+to catch most real hook retries (which arrive within one call, before
+anything else is recorded) and is kept for callers that don't supply a
+turn_id yet, but it is not airtight — pass turn_id whenever the caller has
+one.
 """
 
 import hashlib
@@ -25,8 +33,15 @@ _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 
 def message_point_id(
-    user_id: str, session_id: str, role: str, content: str, disambiguator: str = "",
+    user_id: str, session_id: str, role: str, content: str,
+    disambiguator: str = "", turn_id: str = "",
 ) -> str:
+    if turn_id:
+        # A real idempotency key fully identifies this logical turn — the
+        # id no longer depends on content at all, so even a corrected retry
+        # (same turn, slightly different text) still lands on the same
+        # point instead of the content-hash path's inherent ambiguity.
+        return str(uuid.uuid5(_NAMESPACE, f"msg:{user_id}:{session_id}:{role}:turn:{turn_id}"))
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     key = f"msg:{user_id}:{session_id}:{role}:{digest}"
     if disambiguator:
@@ -104,10 +119,47 @@ def add_message(
     project_id: str = config.DEFAULT_PROJECT,
     source_agent: str = "",
     sibling_content: str = "",
+    turn_id: str = "",
 ) -> str:
-    point_id = message_point_id(user_id, session_id, role, content)
     now = time.time()
     consolidated = False
+
+    if turn_id:
+        # A real idempotency key sidesteps content/session-state heuristics
+        # entirely — the id is deterministic on its own, so a retry always
+        # finds (and only ever finds) this exact point.
+        point_id = message_point_id(user_id, session_id, role, content, turn_id=turn_id)
+        existing = client.retrieve(
+            collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
+            with_payload=["consolidated"],
+        )
+        if existing:
+            consolidated = bool(existing[0].payload.get("consolidated"))
+        vector = embed_model.get_text_embedding(content)
+        payload = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "project_id": project_id or config.DEFAULT_PROJECT,
+            "role": role,
+            "content": content,
+            "timestamp": now,
+            "consolidated": consolidated,
+            "turn_id": turn_id,
+        }
+        if source_agent:
+            payload["source_agent"] = source_agent
+        client.upsert(
+            collection_name=config.CHAT_HISTORY_COLLECTION,
+            points=[qmodels.PointStruct(
+                id=point_id,
+                vector=hybrid.point_vector(client, config.CHAT_HISTORY_COLLECTION, vector, content),
+                payload=payload,
+            )],
+        )
+        qdrant_setup.touch_meta(client)
+        return point_id
+
+    point_id = message_point_id(user_id, session_id, role, content)
     existing = client.retrieve(
         collection_name=config.CHAT_HISTORY_COLLECTION, ids=[point_id],
         with_payload=["timestamp", "consolidated"],
