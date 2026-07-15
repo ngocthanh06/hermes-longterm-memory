@@ -1012,6 +1012,27 @@ def test_route_query_triggers():
     assert memories.route_query("build lại service")["history_hint"] is False
 
 
+def test_is_vietnamese():
+    assert memories.is_vietnamese("bạn có thể giúp tôi không?") is True
+    assert memories.is_vietnamese("sửa lỗi này giúp tôi") is True
+    assert memories.is_vietnamese("what does this function do?") is False
+    assert memories.is_vietnamese("please fix the build") is False
+
+
+def test_recall_headers_match_query_language(client):
+    embed = FakeEmbed()
+    memories.save_facts(client, embed, [{"text": "Some fact", "type": "fact"}],
+                        project_id=config.DEFAULT_PROJECT)
+    vn = memories.recall(client, embed, "bạn nhớ gì về dự án này không?", recent_turns=0)
+    assert "[Bộ nhớ dài hạn]" in vn["context_block"]
+    assert "[Long-term memories]" not in vn["context_block"]
+
+    en = memories.recall(client, embed, "what do you remember about this project?",
+                         recent_turns=0)
+    assert "[Long-term memories]" in en["context_block"]
+    assert "[Bộ nhớ dài hạn]" not in en["context_block"]
+
+
 def test_recall_includes_docs_only_when_triggered(client):
     embed = FakeEmbed()
     _seed_doc_chunk(client, "File size limit is 10MB per upload.",
@@ -1019,14 +1040,15 @@ def test_recall_includes_docs_only_when_triggered(client):
     triggered = memories.recall(client, embed, "tài liệu spec nói gì về upload?",
                                 project="proj-a", recent_turns=0)
     assert triggered["routing"]["docs"] is True
-    assert "[Project documents]" in triggered["context_block"]
+    # Vietnamese query -> Vietnamese section headers (see memories.is_vietnamese)
+    assert "[Tài liệu dự án]" in triggered["context_block"]
     assert "10MB" in triggered["context_block"]
     assert triggered["documents"][0]["source"] == "upload-spec.md"
 
     untriggered = memories.recall(client, embed, "upload đang lỗi gì?",
                                   project="proj-a", recent_turns=0)
     assert untriggered["routing"]["docs"] is False
-    assert "[Project documents]" not in untriggered["context_block"]
+    assert "[Tài liệu dự án]" not in untriggered["context_block"]
     assert untriggered["documents"] == []
 
 

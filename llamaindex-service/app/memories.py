@@ -43,6 +43,22 @@ def is_meta_about_assistant(text: str) -> bool:
     return bool(_META_ABOUT_ASSISTANT_RE.search(text))
 
 
+# The recall context_block's own section headers are literal text injected
+# into every turn's prompt regardless of what language the conversation is
+# actually in — unlike stored facts (whose language follows the session that
+# produced them, per the consolidation prompt), these headers are 100% under
+# our control and 100% guaranteed to appear on every recall. Matching them to
+# the CURRENT query's language removes one deterministic source of English
+# text leaking into an otherwise Vietnamese conversation.
+_VN_CHARS_RE = re.compile(
+    r"[ăâđêôơưằắẳẵặầấẩẫậềếểễệồốổỗộờớởỡợừứửữự]", re.IGNORECASE
+)
+
+
+def is_vietnamese(text: str) -> bool:
+    return bool(_VN_CHARS_RE.search(text))
+
+
 def fact_point_id(user_id: str, text: str, project_id: str = "") -> str:
     """Deterministic id per (user, project, normalized text). The project is
     part of the identity: the same sentence can be a distinct fact in two
@@ -1098,35 +1114,49 @@ def recall(
             if entry.get("conflicts_with") else ""
         )
 
+    # Section headers are the one part of context_block under our full
+    # control, unlike stored facts/history (whose language follows whatever
+    # the original session was in) — match them to the query's language so
+    # they don't inject a deterministic dose of English into an otherwise
+    # Vietnamese conversation on every single turn.
+    vn = is_vietnamese(query)
+    headers = {
+        "memories": "[Bộ nhớ dài hạn]" if vn else "[Long-term memories]",
+        "summaries": "[Tóm tắt các phiên trước liên quan]" if vn else "[Session summaries (related past sessions)]",
+        "history": "[Hội thoại trước liên quan]" if vn else "[Related past conversations]",
+        "docs": "[Tài liệu dự án]" if vn else "[Project documents]",
+        "recent": "[Các lượt gần nhất trong phiên này]" if vn else "[Most recent turns in this session]",
+    }
+
     lines: list[str] = []
     if mems:
-        lines.append("[Long-term memories]")
+        lines.append(headers["memories"])
         lines += [
             f"- ({m['type']}, {_fmt_date(m['created_at'])}{_agent(m)}) {m['text']}{_conflict(m)}"
             for m in mems
         ]
     if summaries:
-        lines.append("[Session summaries (related past sessions)]")
+        lines.append(headers["summaries"])
         lines += [
             f"- ({sid}, {_fmt_date(s['created_at'])}{_agent(s)}) {s['text'][:500]}"
             for sid, s in summaries.items()
         ]
     raw_history = [h for h in history if h["session_id"] not in summaries]
     if raw_history:
-        lines.append("[Related past conversations]")
+        lines.append(headers["history"])
         lines += [
             f"- ({h['session_id']}, {_fmt_date(h['timestamp'])}{_agent(h)}) "
             f"{h['role']}: {h['content'][:300]}"
             for h in raw_history
         ]
     if docs:
-        lines.append("[Project documents]")
+        lines.append(headers["docs"])
         lines += [
             f"- ({d['source']}) {d['text'][:config.RECALL_DOC_SNIPPET_CHARS]}"
             for d in docs
         ]
     if recent:
-        lines.append("[Most recent turns in this session]")
+        lines.append(headers["recent"])
         lines += [f"- {t['role']}: {t['content'][:300]}" for t in recent]
 
     return {

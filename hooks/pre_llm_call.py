@@ -13,6 +13,7 @@ failure or timeout degrades to no injection — never blocks the conversation.
 
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -26,6 +27,14 @@ TIMEOUT = float(env_get("LONGBRAIN_MEMORY_RECALL_TIMEOUT", "3"))
 # skip recall for prompts too short to carry meaning, cap the injected block.
 MAX_CONTEXT_CHARS = env_int("LONGBRAIN_MEMORY_MAX_CONTEXT", 6000)
 MIN_PROMPT_CHARS = env_int("LONGBRAIN_RECALL_MIN_PROMPT_CHARS", 15)
+
+# Mirrors app.memories.is_vietnamese — this wrapper line is the one piece of
+# injected text the hook itself controls (context_block's own headers are
+# matched server-side), so it should follow the query's language too instead
+# of guaranteeing a dose of English on every single Vietnamese turn.
+_VN_CHARS_RE = re.compile(
+    r"[ăâđêôơưằắẳẵặầấẩẫậềếểễệồốổỗộờớởỡợừứửữự]", re.IGNORECASE
+)
 
 
 def _extract_query(payload: dict) -> str:
@@ -76,8 +85,10 @@ def main():
 
     context = (result.get("context_block") or "").strip()
     if context:
+        prefix = "Bộ nhớ dài hạn (tự động gọi lại):" if _VN_CHARS_RE.search(query) \
+            else "Long-term memory (auto-recalled):"
         print(json.dumps(
-            {"context": "Long-term memory (auto-recalled):\n" + context[:MAX_CONTEXT_CHARS]},
+            {"context": prefix + "\n" + context[:MAX_CONTEXT_CHARS]},
             ensure_ascii=False,
         ))
     else:
