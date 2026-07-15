@@ -94,11 +94,21 @@ def ensure_all(client: QdrantClient, embed_dim: int) -> None:
     if meta is not None:
         stored_model = meta.get("embed_model")
         stored_dim = meta.get("embed_dim")
-        if stored_model != config.EMBED_MODEL or stored_dim != embed_dim:
+        stored_provider = meta.get("embed_provider")
+        # Same model name + dim from two different providers can still be a
+        # different vector space (different pooling/normalization) — compare
+        # provider too. Null-safe: meta written before this field existed
+        # has no embed_provider, so it can't be compared and is skipped.
+        if (
+            stored_model != config.EMBED_MODEL
+            or stored_dim != embed_dim
+            or (stored_provider and stored_provider != config.EMBED_PROVIDER)
+        ):
             raise RuntimeError(
                 "Embedding mismatch: data on disk was created with "
-                f"{stored_model!r} (dim={stored_dim}) but the service is "
-                f"configured with {config.EMBED_MODEL!r} (dim={embed_dim}). "
+                f"{stored_provider or 'unknown provider'}/{stored_model!r} "
+                f"(dim={stored_dim}) but the service is configured with "
+                f"{config.EMBED_PROVIDER!r}/{config.EMBED_MODEL!r} (dim={embed_dim}). "
                 "Either restore the previous EMBED_PROVIDER/EMBED_MODEL, or "
                 "start fresh (docker compose down -v) / re-embed into new "
                 "collections before switching."

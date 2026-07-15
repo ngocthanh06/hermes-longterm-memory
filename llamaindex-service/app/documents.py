@@ -38,20 +38,28 @@ def point_count(qdrant_client: QdrantClient) -> int:
     return info.points_count
 
 
-def already_ingested(qdrant_client: QdrantClient, stored_path: str) -> bool:
+def already_ingested(qdrant_client: QdrantClient, stored_path: str, project_id: str = "") -> bool:
     """True if a chunk from this exact stored_path (content-addressed by
     store_original, so identical file content -> identical path) is already
     in the index. LlamaIndex flattens metadata onto the top-level payload
     (alongside the serialized `_node_content` it uses to reconstruct nodes),
     so `stored_path` is a plain, indexed field — a cheap filtered lookup.
     Used to make re-running the docs/ watcher a no-op on unchanged files
-    instead of piling up duplicate chunks."""
+    instead of piling up duplicate chunks.
+
+    `project_id` is required to avoid a cross-project false positive: two
+    projects with docs/ folders that happen to contain byte-identical files
+    (e.g. both have a README.md with the same boilerplate) share the same
+    content-addressed stored_path, so without this filter the second
+    project's ingest would be skipped as a "duplicate" of the first
+    project's chunks and end up with zero chunks of its own."""
     try:
+        must = [qmodels.FieldCondition(key="stored_path", match=qmodels.MatchValue(value=stored_path))]
+        if project_id:
+            must.append(qmodels.FieldCondition(key="project_id", match=qmodels.MatchValue(value=project_id)))
         points, _ = qdrant_client.scroll(
             collection_name=config.DOCUMENTS_COLLECTION,
-            scroll_filter=qmodels.Filter(
-                must=[qmodels.FieldCondition(key="stored_path", match=qmodels.MatchValue(value=stored_path))]
-            ),
+            scroll_filter=qmodels.Filter(must=must),
             limit=1,
             with_payload=False,
             with_vectors=False,
@@ -122,10 +130,12 @@ def ingest_text(
 ) -> int:
     document = Document(
         text=text,
+        # user_id/project_id are the partitioning invariant — they must win
+        # over caller-supplied metadata, not be overridable by it.
         metadata={
+            **(metadata or {}),
             "user_id": config.USER_ID,
             "project_id": project_id or config.DEFAULT_PROJECT,
-            **(metadata or {}),
         },
     )
     _hide_admin_metadata(document)
@@ -143,11 +153,13 @@ def ingest_file(
 ) -> int:
     documents = SimpleDirectoryReader(input_files=[str(file_path)]).load_data()
     for document in documents:
+        # user_id/project_id are the partitioning invariant — they must win
+        # over caller-supplied metadata, not be overridable by it.
         document.metadata.update(
             {
+                **(metadata or {}),
                 "user_id": config.USER_ID,
                 "project_id": project_id or config.DEFAULT_PROJECT,
-                **(metadata or {}),
             }
         )
         _hide_admin_metadata(document)

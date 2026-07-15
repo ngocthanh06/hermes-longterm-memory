@@ -65,6 +65,15 @@ SCHEMA_VERSION = 4
 # ---------------------------------------------------------------------------
 CHAT_MEMORY_TOKEN_LIMIT = int(os.getenv("CHAT_MEMORY_TOKEN_LIMIT", "3000"))
 CHAT_HISTORY_MAX_MESSAGES = int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "200"))
+# message_point_id hashes (user, session, role, content) with no adapter-
+# supplied turn id, so two genuinely distinct turns with identical content
+# ("ok" said twice) collide on the same id — this window disambiguates them:
+# a repeat within it is treated as a hook retry of the same turn (idempotent,
+# same id, safe to overwrite); a repeat after it is treated as a new
+# occurrence and gets a distinguishing id instead of silently overwriting the
+# earlier message. A heuristic, not a guarantee — a real turn_id from the
+# adapter would be exact, but that requires an API/hook contract change.
+MESSAGE_DEDUPE_WINDOW_SECONDS = float(os.getenv("LONGBRAIN_MESSAGE_DEDUPE_WINDOW", "60"))
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "4"))
 
 RECALL_TOP_K_MEMORIES = int(os.getenv("RECALL_TOP_K_MEMORIES", "5"))
@@ -186,6 +195,11 @@ CONSOLIDATION_ENABLED = os.getenv("CONSOLIDATION_ENABLED", "true").lower() == "t
 CONSOLIDATION_INTERVAL = float(os.getenv("CONSOLIDATION_INTERVAL", "0"))
 CONSOLIDATION_IDLE_SECONDS = float(os.getenv("CONSOLIDATION_IDLE_SECONDS", "900"))  # session quiet 15m
 CONSOLIDATION_MIN_TURNS = int(os.getenv("CONSOLIDATION_MIN_TURNS", "2"))
+# A session that stays continuously active never goes idle, so the idle-time
+# trigger above never fires mid-session — unconsolidated turns pile up until
+# the user eventually pauses. Force a session into the pending sweep once its
+# backlog crosses this count, regardless of idle time.
+CONSOLIDATION_FORCE_TURNS = int(os.getenv("CONSOLIDATION_FORCE_TURNS", "40"))
 # Catch-up sweeps triggered by on_session_start are debounced: at most one
 # per this window, so opening several chats doesn't hammer the LLM API.
 CONSOLIDATION_SWEEP_DEBOUNCE = float(os.getenv("CONSOLIDATION_SWEEP_DEBOUNCE", "600"))

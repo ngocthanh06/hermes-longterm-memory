@@ -193,6 +193,22 @@ def save_facts(
         # grant cross-project authority (a project UI preference is not a
         # global user preference). A genuinely global/default correction may
         # still retire matching project records.
+        #
+        # NOTE (see #10 in review): this intentionally lets a project-scoped
+        # save retire a DEFAULT-scoped fact sharing the same subject+relation
+        # (tests test_triple_default_preference_superseded_from_project and
+        # test_triple_default_project_superseded_from_any_project lock this
+        # in) — subject="user" relations like editor/comment_language really
+        # are meant to be one global value updatable from any project. The
+        # actual gap is that TRIPLE_VOCABULARY (consolidation.py) also lists
+        # inherently PROJECT-scoped attributes (package_manager, database,
+        # framework) under the same subject="user" convention, so two
+        # different projects' independent choices can incorrectly collide
+        # and retire each other. Fixing that needs a vocabulary/prompt
+        # redesign (e.g. project-scoped relations get a project-qualified
+        # subject) plus a backfill of existing triples — not a change to
+        # this scope filter, which already does the right thing for the
+        # relations it was designed around.
         superseded = []
         superseded_ids = []
         triple = _triple_of(fact) if config.TRIPLE_SUPERSEDE else None
@@ -234,31 +250,55 @@ def save_facts(
         # band catches reworded/summarized restatements that score too low on
         # raw cosine to trust blindly (see config.py) — an LLM judges those,
         # and only when one is configured (LLM_PROVIDER=none skips the band).
-        # Scope the supersede search to this fact's project: near-identical
-        # facts in DIFFERENT projects are distinct knowledge, and letting one
-        # retire the other silently loses the other project's memory.
+        # Scope the supersede search to this fact's project PLUS default:
+        # near-identical facts in a DIFFERENT specific project are distinct
+        # knowledge (letting one retire the other would silently lose the
+        # other project's memory), but a genuinely global fact already saved
+        # under "default" must still be found here — otherwise restating the
+        # same standing preference while working in a new project creates an
+        # orphan project-scoped duplicate instead of being recognized as the
+        # same fact (observed: a "reply in Vietnamese" preference duplicated
+        # across projects because this search never looked at "default").
         hits = client.search(
             collection_name=config.MEMORIES_COLLECTION,
             query_vector=vector,
             query_filter=_active_filter(user_id, extra=[
                 qmodels.FieldCondition(
-                    key="project_id", match=qmodels.MatchValue(value=project_id)
+                    key="project_id",
+                    match=(
+                        qmodels.MatchValue(value=project_id)
+                        if project_id == config.DEFAULT_PROJECT
+                        else qmodels.MatchAny(any=[project_id, config.DEFAULT_PROJECT])
+                    ),
                 ),
             ]),
             limit=5,
             score_threshold=config.DEDUP_LLM_CHECK_MIN,
-            with_payload=["text"],
+            with_payload=["text", "project_id"],
         )
         best_relevant = None  # highest-scoring hit NOT judged a duplicate
+        duplicate_of_global = False
         for hit in hits:
             is_dup = hit.score >= config.SUPERSEDE_SIMILARITY or (
                 llm is not None and _llm_confirms_duplicate(llm, text, hit.payload.get("text", ""))
             )
             if is_dup:
+                hit_project = hit.payload.get("project_id") or config.DEFAULT_PROJECT
+                if hit_project == config.DEFAULT_PROJECT and project_id != config.DEFAULT_PROJECT:
+                    # The match is already global; this project-scoped
+                    # restatement must not create a narrower duplicate that
+                    # could shadow it — the default fact already covers
+                    # every project, so treat this as a no-op confirmation.
+                    duplicate_of_global = True
+                    break
                 superseded_ids.append(hit.id)
                 superseded.append(hit.payload.get("text", ""))
             elif best_relevant is None:
                 best_relevant = hit
+
+        if duplicate_of_global:
+            results.append({"text": text, "status": "duplicate_of_global"})
+            continue
 
         # Contradiction detector (third, weakest-signal tier): triple-
         # supersede and the dedup band above already resolve the fact when
@@ -467,7 +507,7 @@ def search_memories(
         age = max(now - last_seen, 0.0)
         final = e["similarity"] * _decay(age, config.MEMORY_HALF_LIFE_DAYS) * (0.5 + 0.5 * importance)
         hit_project = payload.get("project_id") or config.DEFAULT_PROJECT
-        if scope_policy.boost_same_project(project, hit_project, project_scope):
+        if scope_policy.boost_same_project(project, hit_project, project_scope, config.DEFAULT_PROJECT):
             final *= config.RECALL_PROJECT_BOOST
         if payload.get("type") == "preference":
             # Standing conventions must survive the top-k race against
@@ -981,8 +1021,12 @@ def recall(
     """
     if not project and session_id:
         project = memory_store.get_session_project(client, session_id, user_id)
-        if project == config.DEFAULT_PROJECT:
-            project = ""  # no meaningful project — skip boosting
+        # Keep it as DEFAULT_PROJECT (not ""): scope_policy.filter_projects
+        # still needs a truthy project to apply the strict-scope filter, and
+        # boost_same_project already skips the boost for the default bucket
+        # on its own — blanking it here used to silently disable the FILTER
+        # too, turning every default-project session's "strict" recall into
+        # an unscoped global search.
 
     mems = search_memories(
         client, embed_model, query, user_id, top_k_memories,

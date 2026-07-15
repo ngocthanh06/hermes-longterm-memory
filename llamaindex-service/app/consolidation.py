@@ -86,12 +86,20 @@ conversation, covering (a) what the session was trying to achieve, (b) the
 key decisions or outcomes, and (c) anything left unresolved. It is shown
 when future conversations reference this session, so keep it self-contained.
 For sessions with no real content, use an empty string.
-%(triple_section)sReturn ONLY a JSON object (no prose, no code fences):
+
+Example — given a transcript containing "I switched the project to bun
+instead of pnpm":
+{{"facts": [{{"text": "Project uses bun instead of pnpm", "type": "fact", "importance": 0.7%(example_triple)s}}], "summary": "Session covered switching the project's package manager."}}
+
+%(triple_section)sReturn ONLY a JSON object (no prose, no code fences) with
+EXACTLY these top-level keys — no extra keys, no renamed keys:
 {{"facts": [{{"text": "...", "type": "fact|preference|decision|task", "importance": 0.0-1.0%(triple_keys)s}}], "summary": "..."}}""" % {
     # %-substituted once at import so the {max_facts} .format() placeholder
     # and the {{ }} JSON braces stay untouched.
     "triple_section": _TRIPLE_SECTION if config.TRIPLE_SUPERSEDE else "\n",
     "triple_keys": ', "subject": "...", "relation": "...", "object": "..."'
+    if config.TRIPLE_SUPERSEDE else "",
+    "example_triple": ', "subject": "user", "relation": "package_manager", "object": "bun"'
     if config.TRIPLE_SUPERSEDE else "",
 }
 
@@ -152,9 +160,14 @@ def _parse_extraction(raw: str) -> dict | None:
         return None
     if isinstance(parsed, list):  # legacy array-only format
         parsed = {"facts": parsed, "summary": ""}
-    if not isinstance(parsed, dict):
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("facts"), list):
+        # A dict without a "facts" list — missing entirely, or present but
+        # wrong-typed (e.g. the model emitted "facts": "none") — is a schema
+        # mismatch, not a valid empty extraction: treat it as a parse failure
+        # so the session is retried instead of the turns being marked
+        # consolidated with zero facts saved.
         return None
-    facts = [f for f in (parsed.get("facts") or []) if isinstance(f, dict) and f.get("text")]
+    facts = [f for f in parsed["facts"] if isinstance(f, dict) and f.get("text")]
     summary = parsed.get("summary")
     return {"facts": facts, "summary": summary if isinstance(summary, str) else ""}
 

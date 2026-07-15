@@ -25,14 +25,16 @@ _sweep_lock = threading.Lock()
 
 
 def pending_sessions(client) -> list[dict]:
-    """Sessions that are idle long enough and have enough un-consolidated
-    turns to be worth distilling."""
+    """Sessions that are idle long enough (or, for one that never goes idle,
+    has enough of a backlog on its own) and have enough un-consolidated turns
+    to be worth distilling."""
     now = time.time()
     pending = []
     for s in memory_store.list_sessions(client):
-        if now - s["last_activity"] < config.CONSOLIDATION_IDLE_SECONDS:
-            continue
+        idle = now - s["last_activity"] >= config.CONSOLIDATION_IDLE_SECONDS
         turns = memory_store.fetch_unconsolidated(client, s["session_id"])
+        if not idle and len(turns) < config.CONSOLIDATION_FORCE_TURNS:
+            continue
         if len(turns) >= config.CONSOLIDATION_MIN_TURNS:
             pending.append(
                 {"session_id": s["session_id"], "project_id": s["project_id"],
