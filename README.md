@@ -1,9 +1,11 @@
-# Longbrain — Shared Long-term Memory for AI Agents (LlamaIndex + Qdrant)
+# Longbrain — Local-first Shared Memory for AI Coding Agents
 
-Longbrain is a Docker-packaged long-term memory system for AI agents. It
-doesn't depend on any specific agent, so multiple agents can share the
-same memory. Each user runs their own independent stack — data is always
-stored locally and stays fully private.
+**Shared long-term memory for Claude Code, Codex, Hermes Desktop, and any
+MCP-compatible AI agent.** Longbrain is a self-hosted, Docker-packaged memory
+system that lets multiple agents share the same project-aware context. Each
+user runs an independent stack, so data stays local and fully private.
+
+[Website](https://longbrain.cc.cd) · [User guide](docs/USER_GUIDE.md) · [Latest release](https://github.com/ngocthanh06/longbrain/releases/latest)
 
 By default it needs **no API key, no Ollama, and no Python packages to
 install** — the host-side scripts and hooks run on the stock system
