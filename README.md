@@ -69,9 +69,9 @@ zoom keep large collections readable.
 - **Distillation quality depends on the configured LLM** — a weak local
   model extracts facts less reliably; `LLM_PROVIDER=none` delegates
   distillation to the agent's own model via MCP.
-- Status: **beta / public preview** — solid for developers who understand
-  Docker and want local agent memory; not yet "install-and-trust" for
-  everyone.
+- Status: **stable** — one-command install, eval-guarded recall quality,
+  and a full test suite; scope stays personal, single-machine, macOS-first
+  (the limitations above).
 
 ## Architecture at a glance
 
@@ -114,15 +114,22 @@ controlled forgetting → nightly backup. Before every turn, a hook injects
 only the relevant, size-capped slice of memory — nothing relevant, nothing
 injected.
 
-## Install (3 steps)
+## Install
 
 1. Install [Docker Desktop](https://docs.docker.com/get-docker/).
 2. Install Hermes Desktop and/or Claude Code — whichever agents you use.
-3. In this directory run:
+3. Run from the directory where you want Longbrain to live:
 
 ```bash
-./setup.sh
+curl -fsSL https://raw.githubusercontent.com/ngocthanh06/longbrain/main/install.sh | bash
 ```
+
+The bootstrap clones Longbrain into `./longbrain` (override with
+`LONGBRAIN_INSTALL_DIR`), or updates that checkout when re-run from the
+same directory, then runs `./setup.sh`. To update later, re-run the command
+from the same place — or `git pull && ./setup.sh` inside the checkout. To
+inspect everything first, clone the repository manually and run `./setup.sh`
+from its directory.
 
 **No manual steps remain.** The script creates `.env`, builds & starts the
 containers, wires every installed agent (hooks + MCP), and installs the
