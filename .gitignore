@@ -29,3 +29,7 @@ landingpage/
 # filenames, ticket IDs, and query descriptions that must not be published.
 llamaindex-service/evals/search_eval.local.json
 llamaindex-service/evals/search_eval_results_*.json
+
+# Live recall canaries are derived from the owner's private memory store.
+llamaindex-service/evals/recall_live_eval.local.json
+llamaindex-service/evals/recall_live_baseline.local.json

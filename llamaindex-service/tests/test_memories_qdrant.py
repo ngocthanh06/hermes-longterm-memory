@@ -39,6 +39,40 @@ def test_save_facts_exact_duplicate_skipped(client):
     assert r2[0]["status"] == "duplicate"
 
 
+def test_fact_and_summary_writes_refresh_meta(client, monkeypatch):
+    touched = []
+    monkeypatch.setattr(qdrant_setup, "touch_meta", lambda _client: touched.append(True))
+    embed = FakeEmbed()
+
+    memories.save_facts(client, embed, [{"text": "new durable fact"}])
+    assert len(touched) == 1
+    memories.save_facts(client, embed, [{"text": "new durable fact"}])
+    assert len(touched) == 1  # duplicate is not a write
+
+    memories.save_session_summary(client, embed, "s-meta", "durable summary")
+    assert len(touched) == 2
+
+
+def test_partial_fact_batch_still_records_first_write(client, monkeypatch):
+    touched = []
+    monkeypatch.setattr(qdrant_setup, "touch_meta", lambda _client: touched.append(True))
+
+    class FailsOnSecond(FakeEmbed):
+        def get_text_embedding(self, text):
+            if text == "second fact fails":
+                raise RuntimeError("embedding failed")
+            return super().get_text_embedding(text)
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        memories.save_facts(client, FailsOnSecond(), [
+            {"text": "first fact persists"},
+            {"text": "second fact fails"},
+        ])
+
+    assert len(touched) == 1
+    assert [fact["text"] for fact in memories.list_facts(client)] == ["first fact persists"]
+
+
 def test_save_facts_near_duplicate_superseded(client):
     embed = FakeEmbed({
         "User likes Qdrant": _unit(0),
@@ -1057,7 +1091,13 @@ def test_recall_context_block_shows_source_agent(client):
     memories.save_facts(client, embed, [{"text": "untagged legacy fact"}])
     memory_store.add_message(client, embed, "s-hist", "user", "hello from hermes",
                              source_agent="hermes")
-    block = memories.recall(client, embed, "anything", recent_turns=0)["context_block"]
+    result = memories.recall(client, embed, "anything", recent_turns=0)
+    block = result["context_block"]
+    # REST recall exposes provenance without bloating the injected context:
+    # every selected memory carries its stable point ID in the structured
+    # response (the context_block remains human/token efficient).
+    assert result["memories"]
+    assert all(item.get("id") for item in result["memories"])
     assert ", claude-code) tagged by claude" in block
     assert ", hermes) user: hello from hermes" in block
     # a record without the tag renders without a dangling separator

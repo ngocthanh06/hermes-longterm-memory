@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to recall_live_eval.local.json and add private canaries from your own store. The local file and its generated baseline are gitignored.",
+  "cases": [
+    {
+      "name": "replace-with-a-private-live-canary",
+      "query": "What durable decision should still be retrievable?",
+      "project": "",
+      "expect_include": ["replace this neutral placeholder"],
+      "expect_memory_ids": {
+        "replace this neutral placeholder": "replace-with-the-stable-memory-id"
+      },
+      "expect_exclude": []
+    }
+  ]
+}

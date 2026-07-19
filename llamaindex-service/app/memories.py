@@ -17,7 +17,7 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from app import config, documents, hybrid, memory_store, scope_policy
+from app import config, documents, hybrid, memory_store, qdrant_setup, scope_policy
 
 _NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -375,6 +375,9 @@ def save_facts(
                 payload={"conflicts_with": point_id},
                 points=[contradicts_id],
             )
+        # Stamp each durable fact independently. If a later fact in this
+        # batch fails, this successful write must still be observable.
+        qdrant_setup.touch_meta(client)
         results.append(
             {"text": text, "status": "supersedes" if superseded else "new",
              **({"superseded": superseded} if superseded else {}),
@@ -441,6 +444,7 @@ def save_session_summary(
             payload=payload,
         )],
     )
+    qdrant_setup.touch_meta(client)
     return {"status": "ok", "session_id": session_id}
 
 

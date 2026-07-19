@@ -3,7 +3,10 @@
   "include_hits": 12,
   "include_expected": 13,
   "violations": 0,
-  "total_chars": 11531
+  "total_chars": 11460,
+  "memory_hit_at_1": 5,
+  "memory_hit_at_3": 5,
+  "ranked_memory_expected": 8
  },
  "cases": [
   {
@@ -13,7 +16,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1097,
+   "chars": 1092,
+   "memory_ranks": {
+    "PostgreSQL": 1
+   },
    "note": ""
   },
   {
@@ -23,7 +29,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 720,
+   "chars": 715,
+   "memory_ranks": {
+    "job hoàn thành": 1
+   },
    "note": ""
   },
   {
@@ -33,7 +42,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 598,
+   "chars": 593,
+   "memory_ranks": {
+    "edge-to-edge": 1
+   },
    "note": "shopmed decisions must not leak into a bookinghub-only question — gauge for #4 (global vs project scope)"
   },
   {
@@ -43,7 +55,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1102,
+   "chars": 1097,
+   "memory_ranks": {
+    "Co-Authored-By": 1
+   },
    "note": ""
   },
   {
@@ -53,7 +68,8 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1151,
+   "chars": 1146,
+   "memory_ranks": {},
    "note": ""
   },
   {
@@ -63,7 +79,8 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 460,
+   "chars": 455,
+   "memory_ranks": {},
    "note": ""
   },
   {
@@ -73,7 +90,8 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1580,
+   "chars": 1572,
+   "memory_ranks": {},
    "note": "needs a docs channel in recall — gauge for #1 (memory router); expected to fail against the current pipeline"
   },
   {
@@ -83,7 +101,8 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1017,
+   "chars": 1009,
+   "memory_ranks": {},
    "note": "needs a docs channel in recall — gauge for #1 (memory router); expected to fail against the current pipeline"
   },
   {
@@ -93,7 +112,8 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1565,
+   "chars": 1557,
+   "memory_ranks": {},
    "note": "exact-token rescue via the sparse channel — gauge for C2 hybrid BM25"
   },
   {
@@ -103,7 +123,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 679,
+   "chars": 675,
+   "memory_ranks": {
+    "PSR12": 5
+   },
    "note": ""
   },
   {
@@ -113,7 +136,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 1151,
+   "chars": 1146,
+   "memory_ranks": {
+    "Co-Authored-By": 5
+   },
    "note": "a standing-convention preference (4 days old, default importance) must win the top-k race against fresh same-topic status facts at the moment of ACTING — gauge for RECALL_PREFERENCE_BOOST; reproduces the real 2026-07-10 failure (Co-Authored-By trailer added even though the preference was saved)"
   },
   {
@@ -123,7 +149,10 @@
    ],
    "misses": [],
    "violations": [],
-   "chars": 139,
+   "chars": 135,
+   "memory_ranks": {
+    "bun": 1
+   },
    "note": "triple supersession: the two seeded preferences share (user, package_manager) with different objects and texts far apart in cosine — without the triple path recall returns BOTH; gauge for TRIPLE_SUPERSEDE (reproduces the stale pnpm→bun failure)"
   },
   {
@@ -133,7 +162,10 @@
     "ap-northeast-1"
    ],
    "violations": [],
-   "chars": 272,
+   "chars": 268,
+   "memory_ranks": {
+    "ap-northeast-1": null
+   },
    "note": "genuine 2-hop query: hop 1 (PostgreSQL -> shopmed) matches strongly on the exact token; hop 2 (shopmed -> AWS ECS Fargate/ap-northeast-1) shares no keywords with the query text at all, so dense+BM25 top-k can't bridge it without following the entity graph — gauge for whether KG-lite's entity graph (currently /ui-visualization-only, not wired into recall) is worth using for actual recall; expected to fail against the current pipeline"
   }
  ]
